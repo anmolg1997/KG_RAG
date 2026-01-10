@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-gradient: linear-gradient(135deg, #0a1929 0%, #102a43 50%, #0a1929 100%);
+}
+
+body {
+  @apply bg-midnight-950 text-midnight-100 font-sans antialiased;
+  background: var(--bg-gradient);
+  background-size: 400% 400%;
+  min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-midnight-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-midnight-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-midnight-500;
+}
+
+/* Custom utilities */
+@layer utilities {
+  .glass {
+    @apply bg-midnight-900/60 backdrop-blur-xl border border-midnight-700/50;
+  }
+  
+  .glass-dark {
+    @apply bg-midnight-950/80 backdrop-blur-xl border border-midnight-800/50;
+  }
+  
+  .glow-electric {
+    box-shadow: 0 0 20px rgba(56, 178, 172, 0.3);
+  }
+  
+  .glow-amber {
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
+  }
+  
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-electric-400 to-electric-300;
+  }
+  
+  .animate-in {
+    animation: animateIn 0.3s ease-out forwards;
+  }
+}
+
+@keyframes animateIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Graph visualization */
+.force-graph-container canvas {
+  @apply rounded-xl;
+}
+
+/* Markdown styling */
+.markdown-content h1 {
+  @apply text-2xl font-bold text-electric-300 mb-4 mt-6;
+}
+
+.markdown-content h2 {
+  @apply text-xl font-semibold text-electric-400 mb-3 mt-5;
+}
+
+.markdown-content h3 {
+  @apply text-lg font-medium text-midnight-200 mb-2 mt-4;
+}
+
+.markdown-content p {
+  @apply mb-4 leading-relaxed;
+}
+
+.markdown-content ul {
+  @apply list-disc list-inside mb-4 space-y-1;
+}
+
+.markdown-content ol {
+  @apply list-decimal list-inside mb-4 space-y-1;
+}
+
+.markdown-content code {
+  @apply bg-midnight-800 px-1.5 py-0.5 rounded text-sm font-mono text-electric-300;
+}
+
+.markdown-content pre {
+  @apply bg-midnight-800 p-4 rounded-lg overflow-x-auto mb-4;
+}
+
+.markdown-content pre code {
+  @apply bg-transparent p-0;
+}
+
+.markdown-content blockquote {
+  @apply border-l-4 border-electric-500 pl-4 italic text-midnight-300;
+}
+
+.markdown-content a {
+  @apply text-electric-400 hover:text-electric-300 underline;
+}
+
+.markdown-content strong {
+  @apply font-semibold text-midnight-100;
+}

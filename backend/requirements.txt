@@ -1,0 +1,40 @@
+# =============================================================================
+# KG-RAG Backend Dependencies
+# =============================================================================
+
+# Core Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# LLM Integration
+litellm==1.55.8
+
+# Neo4j
+neo4j==5.27.0
+
+# PDF Processing
+pymupdf==1.25.1
+pdfplumber==0.11.4
+
+# Text Processing
+tiktoken==0.8.0  # Token counting for chunking
+
+# Async Support
+httpx==0.28.1
+aiofiles==24.1.0
+
+# File Upload
+python-multipart==0.0.20
+
+# Utilities
+python-dotenv==1.0.1
+tenacity==9.0.0  # Retry logic for LLM calls
+pyyaml==6.0.2  # Schema file parsing
+
+# Development
+pytest==8.3.4
+pytest-asyncio==0.25.2
+black==24.10.0
+ruff==0.8.6

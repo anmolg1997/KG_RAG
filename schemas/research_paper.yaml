@@ -1,0 +1,287 @@
+# =============================================================================
+# RESEARCH PAPER SCHEMA
+# =============================================================================
+# Example schema for academic/research papers.
+# Demonstrates how the system adapts to completely different document types.
+
+schema:
+  name: research_paper
+  version: "1.0"
+  description: "Schema for analyzing academic research papers"
+  
+  document_types:
+    - research_paper
+    - academic_paper
+    - journal_article
+    - conference_paper
+    - thesis
+
+# =============================================================================
+# ENTITIES
+# =============================================================================
+
+entities:
+  - name: Paper
+    description: "The research paper document"
+    color: "#38b2ac"
+    
+    properties:
+      - name: title
+        type: string
+        required: true
+        description: "Title of the paper"
+        
+      - name: abstract
+        type: text
+        required: false
+        description: "Paper abstract"
+        
+      - name: publication_date
+        type: date
+        required: false
+        description: "When the paper was published"
+        
+      - name: venue
+        type: string
+        required: false
+        description: "Journal or conference name"
+        
+      - name: doi
+        type: string
+        required: false
+        description: "Digital Object Identifier"
+        
+      - name: keywords
+        type: list
+        item_type: string
+        required: false
+        description: "Paper keywords"
+
+  - name: Author
+    description: "A person who wrote the paper"
+    color: "#f59e0b"
+    
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Author's full name"
+        
+      - name: affiliation
+        type: string
+        required: false
+        description: "Institution or organization"
+        
+      - name: email
+        type: string
+        required: false
+        description: "Contact email"
+        
+      - name: is_corresponding
+        type: boolean
+        default: false
+        description: "Whether this is the corresponding author"
+
+  - name: Institution
+    description: "An academic institution or organization"
+    color: "#8b5cf6"
+    
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Institution name"
+        
+      - name: country
+        type: string
+        required: false
+        description: "Country location"
+        
+      - name: type
+        type: enum
+        values: [university, research_lab, company, government, other]
+        default: university
+
+  - name: Method
+    description: "A research method or technique used"
+    color: "#ef4444"
+    
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Name of the method"
+        
+      - name: description
+        type: text
+        required: false
+        description: "How the method works"
+        
+      - name: category
+        type: enum
+        values: [experimental, computational, theoretical, survey, mixed]
+        required: false
+
+  - name: Dataset
+    description: "A dataset used or created in the research"
+    color: "#10b981"
+    
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Dataset name"
+        
+      - name: size
+        type: string
+        required: false
+        description: "Size of the dataset"
+        
+      - name: source
+        type: string
+        required: false
+        description: "Where the dataset came from"
+        
+      - name: is_public
+        type: boolean
+        default: false
+        description: "Whether publicly available"
+
+  - name: Finding
+    description: "A key finding or result from the research"
+    color: "#3b82f6"
+    
+    properties:
+      - name: description
+        type: text
+        required: true
+        description: "What was found"
+        
+      - name: significance
+        type: enum
+        values: [major, minor, incremental]
+        required: false
+        description: "Importance of the finding"
+        
+      - name: metrics
+        type: list
+        item_type: string
+        required: false
+        description: "Quantitative results"
+
+  - name: Citation
+    description: "A referenced work"
+    color: "#64748b"
+    
+    properties:
+      - name: title
+        type: string
+        required: true
+        description: "Title of cited work"
+        
+      - name: authors
+        type: string
+        required: false
+        description: "Authors of cited work"
+        
+      - name: year
+        type: number
+        required: false
+        description: "Publication year"
+        
+      - name: citation_context
+        type: text
+        required: false
+        description: "Why it was cited"
+
+# =============================================================================
+# RELATIONSHIPS
+# =============================================================================
+
+relationships:
+  - name: AUTHORED_BY
+    source: Paper
+    target: Author
+    description: "Paper was written by this author"
+    
+  - name: AFFILIATED_WITH
+    source: Author
+    target: Institution
+    description: "Author belongs to this institution"
+    
+  - name: USES_METHOD
+    source: Paper
+    target: Method
+    description: "Paper uses this research method"
+    
+  - name: USES_DATASET
+    source: Paper
+    target: Dataset
+    description: "Paper uses this dataset"
+    
+  - name: HAS_FINDING
+    source: Paper
+    target: Finding
+    description: "Paper reports this finding"
+    
+  - name: CITES
+    source: Paper
+    target: Citation
+    description: "Paper cites this work"
+    
+  - name: FINDING_FROM_METHOD
+    source: Finding
+    target: Method
+    description: "Finding was obtained using this method"
+    
+  - name: FINDING_FROM_DATASET
+    source: Finding
+    target: Dataset
+    description: "Finding was obtained from this dataset"
+
+# =============================================================================
+# EXTRACTION INSTRUCTIONS
+# =============================================================================
+
+extraction:
+  system_prompt: |
+    You are an expert academic researcher specializing in analyzing 
+    research papers and extracting structured information.
+    
+    Your task is to extract key information from research papers
+    according to the provided schema.
+    
+    EXTRACTION PRINCIPLES:
+    1. Focus on the main contributions and findings
+    2. Identify all authors and their affiliations
+    3. Extract methods and datasets used
+    4. Note key results with metrics when available
+    5. Capture important citations and why they were referenced
+
+  domain_hints:
+    - "Look for the abstract section for paper summary"
+    - "Author affiliations are usually listed after names"
+    - "Methods are often in a 'Methodology' or 'Methods' section"
+    - "Results and findings are in 'Results' or 'Experiments' sections"
+    - "Check 'Related Work' for important citations"
+
+# =============================================================================
+# QUERY EXAMPLES
+# =============================================================================
+
+query_examples:
+  - question: "Who are the authors?"
+    entity_types: [Author]
+    relationships: [AUTHORED_BY]
+    
+  - question: "What methods were used?"
+    entity_types: [Method]
+    relationships: [USES_METHOD]
+    
+  - question: "What are the main findings?"
+    entity_types: [Finding]
+    relationships: [HAS_FINDING]
+    
+  - question: "What datasets were used?"
+    entity_types: [Dataset]
+    relationships: [USES_DATASET]

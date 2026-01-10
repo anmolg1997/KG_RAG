@@ -1,0 +1,422 @@
+# =============================================================================
+# CONTRACT ANALYSIS SCHEMA
+# =============================================================================
+# This schema defines the ontology for analyzing legal contracts.
+# You can create similar files for other document types (research papers, invoices, etc.)
+#
+# HOW TO USE:
+# 1. Copy this file and rename it (e.g., research_paper.yaml)
+# 2. Modify entities, properties, and relationships for your domain
+# 3. Set ACTIVE_SCHEMA=your_schema_name in .env
+# 4. The system automatically adapts to your schema!
+
+schema:
+  name: contract
+  version: "1.0"
+  description: "Schema for analyzing legal contracts and agreements"
+  
+  # What types of documents this schema handles
+  document_types:
+    - legal_contract
+    - agreement
+    - nda
+    - license_agreement
+    - service_agreement
+
+# =============================================================================
+# ENTITIES
+# =============================================================================
+# Entities are the "nodes" in your knowledge graph.
+# Each entity type becomes a node label in Neo4j.
+
+entities:
+  # -------------------------------------------------------------------------
+  # Contract - The main document entity
+  # -------------------------------------------------------------------------
+  - name: Contract
+    description: "The top-level legal agreement document"
+    color: "#38b2ac"  # For visualization
+    
+    properties:
+      - name: title
+        type: string
+        required: true
+        description: "Title or name of the contract"
+        
+      - name: contract_type
+        type: string
+        required: false
+        description: "Type of contract (NDA, License, Service, etc.)"
+        
+      - name: effective_date
+        type: date
+        required: false
+        description: "When the contract takes effect"
+        
+      - name: expiration_date
+        type: date
+        required: false
+        description: "When the contract expires"
+        
+      - name: status
+        type: enum
+        values: [draft, active, expired, terminated]
+        default: active
+        description: "Current status of the contract"
+        
+      - name: summary
+        type: text
+        required: false
+        description: "Executive summary of the contract"
+        
+      - name: source_file
+        type: string
+        required: false
+        description: "Original filename"
+
+  # -------------------------------------------------------------------------
+  # Party - People or organizations in the contract
+  # -------------------------------------------------------------------------
+  - name: Party
+    description: "A person or organization involved in the contract"
+    color: "#f59e0b"
+    
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Full legal name of the party"
+        
+      - name: party_type
+        type: enum
+        values: [individual, corporation, llc, partnership, government, non_profit, other]
+        default: other
+        description: "Type of legal entity"
+        
+      - name: role
+        type: enum
+        values: [buyer, seller, licensor, licensee, landlord, tenant, employer, employee, service_provider, client, lender, borrower, guarantor, other]
+        default: other
+        description: "Role in the contract"
+        
+      - name: address
+        type: string
+        required: false
+        description: "Physical address"
+        
+      - name: jurisdiction
+        type: string
+        required: false
+        description: "State/country of incorporation"
+
+  # -------------------------------------------------------------------------
+  # Clause - Sections of the contract
+  # -------------------------------------------------------------------------
+  - name: Clause
+    description: "A distinct section or provision in the contract"
+    color: "#8b5cf6"
+    
+    properties:
+      - name: clause_type
+        type: enum
+        values:
+          - parties
+          - effective_date
+          - term_duration
+          - renewal
+          - termination
+          - payment
+          - price
+          - delivery
+          - performance
+          - exclusivity
+          - non_compete
+          - intellectual_property
+          - license_grant
+          - confidentiality
+          - non_disclosure
+          - indemnification
+          - liability_limitation
+          - warranty
+          - insurance
+          - governing_law
+          - dispute_resolution
+          - arbitration
+          - assignment
+          - force_majeure
+          - notice
+          - other
+        required: true
+        description: "Category of the clause"
+        
+      - name: title
+        type: string
+        required: false
+        description: "Section title if present"
+        
+      - name: section_number
+        type: string
+        required: false
+        description: "Section/article number"
+        
+      - name: text
+        type: text
+        required: true
+        description: "Full verbatim text of the clause"
+        
+      - name: summary
+        type: text
+        required: true
+        description: "Brief 1-2 sentence summary"
+        
+      - name: key_terms
+        type: list
+        item_type: string
+        required: false
+        description: "Key legal terms mentioned"
+
+  # -------------------------------------------------------------------------
+  # Obligation - Duties arising from the contract
+  # -------------------------------------------------------------------------
+  - name: Obligation
+    description: "A duty or responsibility created by the contract"
+    color: "#ef4444"
+    
+    properties:
+      - name: obligation_type
+        type: enum
+        values: [payment, delivery, performance, notification, compliance, confidentiality, indemnification, insurance, reporting, other]
+        required: true
+        description: "Category of obligation"
+        
+      - name: description
+        type: text
+        required: true
+        description: "What must be done"
+        
+      - name: status
+        type: enum
+        values: [active, pending, fulfilled, breached, waived, expired]
+        default: active
+        description: "Current status"
+        
+      - name: conditions
+        type: list
+        item_type: string
+        required: false
+        description: "Conditions that must be met"
+        
+      - name: trigger_event
+        type: string
+        required: false
+        description: "What triggers this obligation"
+        
+      - name: breach_consequences
+        type: text
+        required: false
+        description: "What happens if breached"
+
+  # -------------------------------------------------------------------------
+  # ContractDate - Significant dates
+  # -------------------------------------------------------------------------
+  - name: ContractDate
+    description: "A significant date mentioned in the contract"
+    color: "#10b981"
+    
+    properties:
+      - name: date_type
+        type: enum
+        values: [effective_date, expiration_date, termination_date, deadline, renewal_date, signature_date, delivery_date, payment_due, other]
+        required: true
+        description: "Type of date"
+        
+      - name: value
+        type: date
+        required: false
+        description: "Specific date if known (YYYY-MM-DD)"
+        
+      - name: description
+        type: text
+        required: true
+        description: "Description or relative date expression"
+        
+      - name: is_relative
+        type: boolean
+        default: false
+        description: "Whether date is relative to an event"
+        
+      - name: relative_to
+        type: string
+        required: false
+        description: "Event this date is relative to"
+
+  # -------------------------------------------------------------------------
+  # Amount - Monetary values
+  # -------------------------------------------------------------------------
+  - name: Amount
+    description: "A monetary value mentioned in the contract"
+    color: "#3b82f6"
+    
+    properties:
+      - name: value
+        type: number
+        required: false
+        description: "Numeric value"
+        
+      - name: currency
+        type: enum
+        values: [USD, EUR, GBP, JPY, CNY, INR, other]
+        default: USD
+        description: "Currency code"
+        
+      - name: description
+        type: text
+        required: true
+        description: "Context of the amount"
+        
+      - name: is_percentage
+        type: boolean
+        default: false
+        description: "Whether this is a percentage"
+        
+      - name: is_variable
+        type: boolean
+        default: false
+        description: "Whether amount depends on conditions"
+        
+      - name: formula
+        type: string
+        required: false
+        description: "Formula if calculated"
+
+# =============================================================================
+# RELATIONSHIPS
+# =============================================================================
+# Relationships are the "edges" connecting entities in your knowledge graph.
+# They define how entities relate to each other.
+
+relationships:
+  # Contract relationships
+  - name: HAS_PARTY
+    source: Contract
+    target: Party
+    description: "Contract involves this party"
+    
+  - name: HAS_CLAUSE
+    source: Contract
+    target: Clause
+    description: "Contract contains this clause"
+    
+  - name: HAS_DATE
+    source: Contract
+    target: ContractDate
+    description: "Contract has this significant date"
+    
+  - name: HAS_AMOUNT
+    source: Contract
+    target: Amount
+    description: "Contract references this amount"
+
+  # Clause relationships
+  - name: CREATES_OBLIGATION
+    source: Clause
+    target: Obligation
+    description: "Clause creates this obligation"
+    
+  - name: REFERENCES_AMOUNT
+    source: Clause
+    target: Amount
+    description: "Clause mentions this amount"
+    
+  - name: REFERENCES_DATE
+    source: Clause
+    target: ContractDate
+    description: "Clause mentions this date"
+    
+  - name: RELATED_TO
+    source: Clause
+    target: Clause
+    description: "Clauses that reference each other"
+
+  # Obligation relationships
+  - name: OBLIGATES
+    source: Obligation
+    target: Party
+    description: "Party who must fulfill the obligation"
+    
+  - name: BENEFITS
+    source: Obligation
+    target: Party
+    description: "Party who receives benefit from obligation"
+    
+  - name: HAS_DEADLINE
+    source: Obligation
+    target: ContractDate
+    description: "Deadline for the obligation"
+
+  # Party relationships
+  - name: BETWEEN_PARTIES
+    source: Contract
+    target: Party
+    bidirectional: true
+    description: "Contract is between these parties"
+
+# =============================================================================
+# EXTRACTION INSTRUCTIONS
+# =============================================================================
+# These instructions guide the LLM on how to extract information.
+# You can customize these for your specific domain.
+
+extraction:
+  system_prompt: |
+    You are an expert legal document analyst specializing in contract analysis 
+    and knowledge graph construction.
+    
+    Your task is to extract structured information from contract documents 
+    according to a predefined schema.
+    
+    EXTRACTION PRINCIPLES:
+    1. Extract ONLY information explicitly stated in the text
+    2. Do not infer or assume information not present
+    3. Preserve exact quotes where relevant
+    4. Assign confidence scores based on clarity of information
+    5. Link entities through relationships when connections are explicit
+    
+    CONFIDENCE SCORING:
+    - 1.0: Information is explicitly and clearly stated
+    - 0.8-0.9: Information is stated but requires some interpretation
+    - 0.6-0.7: Information is implied or partially stated
+    - Below 0.6: Do not extract (too uncertain)
+
+  # Additional domain-specific instructions
+  domain_hints:
+    - "Pay attention to section numbers and titles"
+    - "Look for defined terms (usually capitalized or in quotes)"
+    - "Identify all parties mentioned, even if not main parties"
+    - "Note any referenced external documents or agreements"
+
+# =============================================================================
+# QUERY EXAMPLES
+# =============================================================================
+# Example questions users might ask (helps with query understanding)
+
+query_examples:
+  - question: "What are the termination clauses?"
+    entity_types: [Clause]
+    filters: {clause_type: termination}
+    
+  - question: "Who are the parties in this contract?"
+    entity_types: [Party]
+    relationships: [HAS_PARTY]
+    
+  - question: "What are the payment terms?"
+    entity_types: [Clause, Amount, Obligation]
+    filters: {clause_type: payment, obligation_type: payment}
+    
+  - question: "When does the contract expire?"
+    entity_types: [ContractDate]
+    filters: {date_type: expiration_date}
+    
+  - question: "What are the confidentiality obligations?"
+    entity_types: [Clause, Obligation]
+    filters: {clause_type: confidentiality}
