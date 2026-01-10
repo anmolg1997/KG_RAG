@@ -414,11 +414,84 @@ extraction:
 
 ## 🤝 Contributing
 
-Contributions welcome! Please:
-1. Read the documentation first
-2. Create a feature branch
-3. Add tests if applicable
-4. Submit a PR with clear description
+Contributions are welcome! Here's how you can contribute:
+
+### Getting Started
+
+#### 1. Fork the Repository
+Click the **Fork** button at the top right of this page to create your own copy.
+
+#### 2. Clone Your Fork
+```bash
+git clone https://github.com/YOUR_USERNAME/kg-rag.git
+cd kg-rag
+```
+
+#### 3. Set Up Upstream Remote
+```bash
+git remote add upstream https://github.com/anmolg1997/kg-rag.git
+```
+
+#### 4. Create a Feature Branch
+```bash
+# Sync with upstream first
+git fetch upstream
+git checkout main
+git merge upstream/main
+
+# Create your branch
+git checkout -b feature/your-feature-name
+```
+
+### Making Changes
+
+1. **Read the documentation** in `/docs` to understand the architecture
+2. **Follow the code style** used in the project
+3. **Add tests** if applicable
+4. **Update documentation** if you're adding new features
+
+### Submitting a Pull Request
+
+#### 1. Commit Your Changes
+```bash
+git add .
+git commit -m "feat: add your feature description"
+```
+
+> **Commit Message Convention:**
+> - `feat:` - New feature
+> - `fix:` - Bug fix
+> - `docs:` - Documentation changes
+> - `refactor:` - Code refactoring
+> - `test:` - Adding tests
+
+#### 2. Push to Your Fork
+```bash
+git push origin feature/your-feature-name
+```
+
+#### 3. Create Pull Request
+- Go to your fork on GitHub
+- Click **"Compare & pull request"**
+- Fill in the PR template with:
+  - **What** changes you made
+  - **Why** you made them
+  - **How** to test them
+
+### 💡 Contribution Ideas
+
+- 🐛 Bug fixes
+- 📝 Documentation improvements
+- 🎨 UI/UX enhancements
+- ✨ New schema templates (in `/schemas`)
+- 🧪 Additional tests
+- 🌐 Internationalization
+
+### Code of Conduct
+
+- Be respectful and inclusive
+- Provide constructive feedback
+- Help others learn and grow
 
 ---
 
