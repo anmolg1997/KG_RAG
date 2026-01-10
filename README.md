@@ -8,6 +8,9 @@ A **schema-agnostic** Knowledge Graph-based Retrieval Augmented Generation (RAG)
 ![Neo4j](https://img.shields.io/badge/Neo4j-Community-green)
 ![Schema](https://img.shields.io/badge/Schema-Agnostic-orange)
 
+[![Author](https://img.shields.io/badge/Author-Anmol_Jaiswal-purple?style=flat)](https://www.linkedin.com/in/anmol-8756772501/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/anmol-8756772501/)
+
 ---
 
 ## 📚 Learning Path
@@ -393,6 +396,19 @@ extraction:
 - [Frontend Guide](docs/FRONTEND_GUIDE.md) - React/Vite/Tailwind
 - [Makefile Guide](docs/MAKEFILE_GUIDE.md) - All make commands explained
 - [Schema Guide](schemas/README.md) - Creating custom schemas
+
+---
+
+## 👨‍💻 Author
+
+**Anmol Jaiswal** - *Principal AI Engineer*
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Anmol_Jaiswal-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/anmol-8756772501/)
+[![Email](https://img.shields.io/badge/Email-the.anmol.jaiswal%40gmail.com-red?style=flat&logo=gmail)](mailto:the.anmol.jaiswal@gmail.com)
+
+- 📧 Email: [the.anmol.jaiswal@gmail.com](mailto:the.anmol.jaiswal@gmail.com)
+- 🔗 LinkedIn: [linkedin.com/in/anmol-8756772501](https://www.linkedin.com/in/anmol-8756772501/)
+- 📱 Phone: +91-8756772501
 
 ---
 
