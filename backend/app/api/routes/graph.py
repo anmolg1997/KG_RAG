@@ -32,32 +32,42 @@ async def get_repository() -> DynamicGraphRepository:
 
 
 class GraphStats(BaseModel):
-    """Graph statistics."""
+    """Graph statistics with detailed breakdown."""
     total_nodes: int
     total_relationships: int
     node_counts: dict
-    schema_name: str
+    schema_name: Optional[str] = None
+    
+    # New structured format
+    entities: Optional[dict] = None
+    entity_relationships: Optional[dict] = None
+    infrastructure: Optional[dict] = None
 
 
 @router.get("/stats", response_model=GraphStats)
 async def get_graph_statistics():
-    """Get statistics about the knowledge graph."""
+    """
+    Get statistics about the knowledge graph.
+    
+    Returns comprehensive breakdown:
+    - entities: Entity nodes by type (dynamically from schema)
+    - entity_relationships: Semantic relationships (schema-defined)
+    - infrastructure: Chunks, Documents, and their relationships
+    """
     repo = await get_repository()
     
     try:
         stats = await repo.get_stats()
         
-        # Calculate totals
-        total_nodes = sum(
-            v for k, v in stats.items()
-            if k != "relationships"
-        )
-        
+        # The repo now returns the complete stats structure
         return GraphStats(
-            total_nodes=total_nodes,
-            total_relationships=stats.get("relationships", 0),
-            node_counts=stats,
-            schema_name=settings.active_schema,
+            total_nodes=stats.get("total_nodes", 0),
+            total_relationships=stats.get("total_relationships", 0),
+            node_counts=stats.get("node_counts", {}),
+            schema_name=stats.get("schema_name") or settings.active_schema,
+            entities=stats.get("entities"),
+            entity_relationships=stats.get("entity_relationships"),
+            infrastructure=stats.get("infrastructure"),
         )
     except Exception as e:
         logger.error(f"Failed to get stats: {e}")

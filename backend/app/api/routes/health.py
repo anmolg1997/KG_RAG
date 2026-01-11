@@ -5,8 +5,9 @@ Provides endpoints for monitoring system health and readiness.
 """
 
 import logging
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -17,6 +18,11 @@ from app.core.llm import get_llm_client
 from app.schema.loader import get_schema_loader
 
 logger = logging.getLogger(__name__)
+
+# Cache for LLM health check to avoid excessive API calls
+# Format: (ServiceHealth, timestamp)
+_llm_health_cache: Tuple[Optional["ServiceHealth"], float] = (None, 0)
+_LLM_HEALTH_CACHE_TTL = 3600  # 1 hour
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -96,8 +102,8 @@ async def health_check():
             "entity_count": len(schema.entities),
             "relationship_count": len(schema.relationships),
         }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to get schema info for health check: {e}")
     
     return HealthResponse(
         status=overall_status,
@@ -123,14 +129,16 @@ async def readiness_check():
     try:
         neo4j_ready = await neo4j_client.health_check()
         checks["neo4j"] = neo4j_ready
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Neo4j readiness check failed: {e}")
         checks["neo4j"] = False
     
     # LLM must be reachable
     try:
         llm_health = await _check_llm()
         checks["llm"] = llm_health.status == "healthy"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"LLM readiness check failed: {e}")
         checks["llm"] = False
     
     # Schema must be loadable
@@ -138,7 +146,8 @@ async def readiness_check():
         loader = get_schema_loader()
         loader.get_active_schema()
         checks["schema"] = True
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Schema readiness check failed: {e}")
         checks["schema"] = False
     
     ready = all(checks.values())
@@ -176,8 +185,8 @@ async def neo4j_health():
             schema = await client.get_schema()
             extra_info["labels"] = schema.get("labels", [])
             extra_info["relationship_types"] = schema.get("relationship_types", [])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to get Neo4j schema info: {e}")
     
     return {
         **health.model_dump(),
@@ -211,12 +220,19 @@ async def config_check():
     """
     return {
         "neo4j_uri": settings.neo4j_uri,
+        "neo4j_max_pool_size": settings.neo4j_max_pool_size,
         "active_schema": settings.active_schema,
         "default_llm_model": settings.default_llm_model,
         "extraction_model": settings.extraction_model,
+        "extraction_temperature": settings.extraction_temperature,
+        "extraction_max_tokens": settings.extraction_max_tokens,
         "rag_model": settings.rag_model,
+        "rag_temperature": settings.rag_temperature,
+        "rag_max_tokens": settings.rag_max_tokens,
+        "rag_max_conversation_history": settings.rag_max_conversation_history,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
+        "default_strategy_preset": settings.default_strategy_preset,
         "debug": settings.debug,
     }
 
@@ -243,7 +259,6 @@ async def available_schemas():
 
 async def _check_neo4j() -> ServiceHealth:
     """Check Neo4j health."""
-    import time
     
     try:
         start = time.time()
@@ -297,26 +312,47 @@ def _check_schema() -> ServiceHealth:
         )
 
 
-async def _check_llm() -> ServiceHealth:
+async def _check_llm(force_refresh: bool = False) -> ServiceHealth:
     """
     Check LLM API health by making a minimal API call.
+    
+    Results are cached for 5 minutes to avoid excessive API calls during health polling.
     
     This verifies:
     - API key is configured
     - API key is valid
     - LLM service is reachable
+    
+    Args:
+        force_refresh: If True, bypass cache and make a fresh API call
     """
-    import time
+    global _llm_health_cache
+    
+    # Check cache first (unless force refresh requested)
+    cached_result, cached_time = _llm_health_cache
+    if not force_refresh and cached_result is not None:
+        cache_age = time.time() - cached_time
+        if cache_age < _LLM_HEALTH_CACHE_TTL:
+            # Return cached result with updated message showing cache status
+            cached_with_info = ServiceHealth(
+                name=cached_result.name,
+                status=cached_result.status,
+                message=f"{cached_result.message} (cached {int(cache_age)}s ago)",
+                latency_ms=cached_result.latency_ms,
+            )
+            return cached_with_info
     
     # First check if any API key is configured
     if not settings.openai_api_key and not settings.anthropic_api_key:
         # Check if using Ollama (no key needed)
         if not settings.default_llm_model.startswith("ollama/"):
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="unhealthy",
                 message="No API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)",
             )
+            _llm_health_cache = (result, time.time())
+            return result
     
     try:
         start = time.time()
@@ -332,14 +368,14 @@ async def _check_llm() -> ServiceHealth:
         latency = (time.time() - start) * 1000
         
         if response and len(response) > 0:
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="healthy",
                 message=f"Model: {client.model}",
                 latency_ms=round(latency, 2),
             )
         else:
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="degraded",
                 message="Empty response from LLM",
@@ -350,20 +386,24 @@ async def _check_llm() -> ServiceHealth:
         
         # Detect common API key errors
         if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="unhealthy",
                 message="Invalid API key",
             )
         elif "rate" in error_msg.lower() and "limit" in error_msg.lower():
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="degraded",
                 message="Rate limited - but API key is valid",
             )
         else:
-            return ServiceHealth(
+            result = ServiceHealth(
                 name="llm",
                 status="unhealthy",
                 message=f"LLM error: {error_msg[:100]}",
             )
+    
+    # Cache the result
+    _llm_health_cache = (result, time.time())
+    return result

@@ -73,9 +73,44 @@ class APIKeyMaskingFilter(logging.Filter):
         return text
 
 
+class LiteLLMNoiseFilter(logging.Filter):
+    """
+    Filter out repetitive LiteLLM completion logs while preserving useful ones.
+    
+    Filters out:
+    - "LiteLLM completion() model=..." (logged on every call)
+    
+    Preserves:
+    - Rate limit warnings
+    - Retry messages  
+    - Error messages
+    - Token usage info
+    """
+    
+    NOISE_PATTERNS = [
+        "LiteLLM completion()",
+        "completion() model=",
+    ]
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        
+        # Always allow warnings and errors
+        if record.levelno >= logging.WARNING:
+            return True
+        
+        # Filter out known noisy patterns at INFO level
+        for pattern in self.NOISE_PATTERNS:
+            if pattern in message:
+                return False
+        
+        return True
+
+
 def setup_secure_logging():
-    """Apply API key masking filter to all relevant loggers."""
+    """Apply API key masking filter to all relevant loggers and reduce LiteLLM noise."""
     masking_filter = APIKeyMaskingFilter()
+    noise_filter = LiteLLMNoiseFilter()
     
     # Apply to root logger
     logging.getLogger().addFilter(masking_filter)
@@ -84,6 +119,8 @@ def setup_secure_logging():
     for logger_name in ['LiteLLM', 'litellm', 'openai', 'anthropic']:
         log = logging.getLogger(logger_name)
         log.addFilter(masking_filter)
+        # Filter out repetitive completion logs but preserve useful INFO
+        log.addFilter(noise_filter)
     
     # Also apply masking filter to all existing handlers
     for handler in logging.getLogger().handlers:
@@ -167,9 +204,9 @@ class LLMClient:
         # Configure LiteLLM
         self._configure_api_keys()
         
-        # Enable verbose logging in debug mode
-        if settings.debug:
-            litellm.set_verbose = True
+        # Disable LiteLLM's verbose logging (causes duplicate logs)
+        # Our own structured logging provides better output
+        litellm.set_verbose = False
 
     def _configure_api_keys(self) -> None:
         """Configure API keys for different providers."""
@@ -184,6 +221,59 @@ class LLMClient:
         # Ollama doesn't need API key, just base URL
         if self.model.startswith("ollama/"):
             litellm.api_base = settings.ollama_base_url
+
+    def _log_usage(self, response: Any, model: str) -> None:
+        """
+        Log token usage and cost from LLM response.
+        
+        Uses LiteLLM's built-in completion_cost() which:
+        - Automatically extracts model and usage from response
+        - Looks up cost from LiteLLM's model price database
+        - Returns None for models without pricing info (e.g., local Ollama)
+        """
+        from litellm import completion_cost
+        
+        # Initialize tracking attributes if needed
+        if not hasattr(self, '_total_tokens'):
+            self._total_tokens = 0
+            self._total_cost = 0.0
+        
+        # Extract usage from response (LiteLLM normalizes this across providers)
+        usage = getattr(response, 'usage', None)
+        if not usage:
+            return
+        
+        prompt_tokens = getattr(usage, 'prompt_tokens', 0)
+        completion_tokens = getattr(usage, 'completion_tokens', 0)
+        total_tokens = getattr(usage, 'total_tokens', 0)
+        
+        # Track cumulative tokens
+        self._total_tokens += total_tokens
+        
+        # Calculate cost using LiteLLM's built-in function
+        # This uses LiteLLM's model_prices_and_context_window.json database
+        # Returns None for unknown models (e.g., local Ollama), which is fine
+        cost: Optional[float] = None
+        try:
+            cost = completion_cost(completion_response=response)
+            if cost is not None and cost > 0:
+                self._total_cost += cost
+        except Exception as e:
+            # Models not in LiteLLM's price database will raise an exception
+            # This is expected for local models (Ollama) and is not an error
+            logger.debug(f"Cost calculation not available for {model}: {e}")
+        
+        # Log usage with cost (if available)
+        if cost is not None and cost > 0:
+            logger.debug(
+                f"LLM usage: {prompt_tokens} prompt + {completion_tokens} completion = "
+                f"{total_tokens} tokens, cost=${cost:.6f}"
+            )
+        else:
+            logger.debug(
+                f"LLM usage: {prompt_tokens} prompt + {completion_tokens} completion = "
+                f"{total_tokens} tokens (cost N/A for {model})"
+            )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -227,6 +317,10 @@ class LLMClient:
             )
             
             content = response.choices[0].message.content
+            
+            # Log token usage and cost
+            self._log_usage(response, model or self.model)
+            
             logger.debug(f"LLM response: {content[:200]}...")
             return content
             
@@ -297,6 +391,10 @@ Important:
             )
             
             content = response.choices[0].message.content
+            
+            # Log token usage and cost
+            self._log_usage(response, model or self.model)
+            
             logger.debug(f"LLM structured response: {content[:200]}...")
             
             # Parse and validate with Pydantic
@@ -368,6 +466,24 @@ Important:
         except Exception as e:
             logger.error(f"Tool completion failed: {e}")
             raise
+
+    def get_usage_stats(self) -> dict[str, Any]:
+        """
+        Get cumulative usage statistics for this client instance.
+        
+        Returns:
+            dict with total_tokens and total_cost (if available)
+        """
+        return {
+            "total_tokens": getattr(self, '_total_tokens', 0),
+            "total_cost": getattr(self, '_total_cost', 0.0),
+            "model": self.model,
+        }
+    
+    def reset_usage_stats(self) -> None:
+        """Reset cumulative usage statistics."""
+        self._total_tokens = 0
+        self._total_cost = 0.0
 
 
 # Singleton instances for different use cases

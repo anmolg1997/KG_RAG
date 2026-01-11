@@ -285,25 +285,60 @@ class IngestionPipeline:
         self._active_ingestions[document_id] = status
         
         try:
-            # Step 1: Parse PDF from bytes
+            # ═══════════════════════════════════════════════════════════════
+            # DOCUMENT INGESTION FLOW
+            # ═══════════════════════════════════════════════════════════════
+            logger.info("")
+            logger.info("═" * 60)
+            logger.info(f"📄 DOCUMENT INGESTION: {filename}")
+            logger.info("═" * 60)
+            
+            # ─────────────────────────────────────────────────────────────
+            # STEP 1: Parse PDF
+            # ─────────────────────────────────────────────────────────────
             status.status = "parsing"
-            logger.info(f"Parsing uploaded document: {filename}")
+            logger.info("")
+            logger.info("┌─ STEP 1: Parse PDF")
+            logger.info("│  Input:  PDF bytes")
             
             parsed_doc = self.pdf_parser.parse_bytes(data, filename)
             status.pages_parsed = parsed_doc.metadata.page_count
             status.total_pages = parsed_doc.metadata.page_count
             
-            # Step 2: Create chunks
+            logger.info(f"│  Output: {parsed_doc.metadata.page_count} pages, {parsed_doc.total_characters:,} characters")
+            logger.info("└─ ✓ Parsing complete")
+            
+            # ─────────────────────────────────────────────────────────────
+            # STEP 2: Create text chunks
+            # ─────────────────────────────────────────────────────────────
             status.status = "chunking"
+            logger.info("")
+            logger.info("┌─ STEP 2: Create text chunks")
+            chunking_cfg = self.extraction_strategy.chunking
+            logger.info(f"│  Strategy: {chunking_cfg.strategy} (size={chunking_cfg.chunk_size}, overlap={chunking_cfg.chunk_overlap})")
+            
             chunks = self.chunker.chunk_document(
                 parsed_doc,
+                extraction_strategy=self.extraction_strategy,
                 document_id=document_id,
             )
             status.chunks_created = len(chunks)
             status.total_chunks = len(chunks)
             
-            # Step 3: Extract entities + metadata per chunk via LLM
+            logger.info(f"│  Output: {len(chunks)} chunks created")
+            logger.info("└─ ✓ Chunking complete")
+            
+            # ─────────────────────────────────────────────────────────────
+            # STEP 3: Extract entities + metadata (LLM calls)
+            # ─────────────────────────────────────────────────────────────
             status.status = "extracting"
+            logger.info("")
+            logger.info("┌─ STEP 3: Extract entities + metadata (LLM)")
+            logger.info(f"│  Schema: {self.extractor.schema.schema_info.name}")
+            logger.info(f"│  Strategy: {getattr(self.extraction_strategy, 'name', 'custom')}")
+            logger.info(f"│  Chunks to process: {len(chunks)}")
+            logger.info("│")
+            
             merged_graph, all_chunk_metadata = await self._extract_from_chunks(
                 chunks, filename, status
             )
@@ -311,22 +346,61 @@ class IngestionPipeline:
             # Apply metadata to chunks
             self._apply_metadata_to_chunks(chunks, all_chunk_metadata)
             
-            # Step 4: Store in graph
+            logger.info("│")
+            raw_count = merged_graph.raw_entity_count
+            unique_count = merged_graph.entity_count
+            if raw_count != unique_count:
+                logger.info(f"│  Result: {unique_count} unique entities (from {raw_count} extracted), {merged_graph.relationship_count} relationships")
+            else:
+                logger.info(f"│  Result: {unique_count} entities, {merged_graph.relationship_count} relationships")
+            logger.info("└─ ✓ Extraction complete")
+            
+            # ─────────────────────────────────────────────────────────────
+            # STEP 4: Store in Neo4j
+            # ─────────────────────────────────────────────────────────────
             if store_in_graph and self.graph_repo:
                 status.status = "storing"
+                logger.info("")
+                logger.info("┌─ STEP 4: Store in Neo4j")
                 
                 if self.extraction_strategy.chunks.enabled:
+                    logger.info("│  ├─ Creating Document node")
+                    logger.info(f"│  ├─ Creating {len(chunks)} Chunk nodes")
                     await self._store_document_and_chunks(
                         document_id, filename, parsed_doc, chunks
                     )
+                    if self.extraction_strategy.chunk_linking.sequential:
+                        logger.info("│  ├─ Creating NEXT/PREV chunk links")
                 
+                logger.info(f"│  ├─ Storing {merged_graph.entity_count} entity nodes")
                 await self.graph_repo.store_graph(merged_graph)
                 
                 if self.extraction_strategy.entity_linking.enabled and chunks:
+                    logger.info("│  ├─ Creating EXTRACTED_FROM links")
                     await self._link_entities_to_chunks(merged_graph, chunks)
+                
+                logger.info("└─ ✓ Storage complete")
             
+            # ─────────────────────────────────────────────────────────────
+            # COMPLETE
+            # ─────────────────────────────────────────────────────────────
             status.status = "completed"
             status.completed_at = datetime.now()
+            
+            elapsed = (status.completed_at - status.started_at).total_seconds()
+            logger.info("")
+            logger.info("═" * 60)
+            logger.info(f"✅ INGESTION COMPLETE: {filename}")
+            logger.info(f"   Document ID: {document_id}")
+            raw_count = merged_graph.raw_entity_count
+            unique_count = merged_graph.entity_count
+            if raw_count != unique_count:
+                logger.info(f"   Entities: {unique_count} unique (from {raw_count}) | Relationships: {merged_graph.relationship_count}")
+            else:
+                logger.info(f"   Entities: {unique_count} | Relationships: {merged_graph.relationship_count}")
+            logger.info(f"   Chunks: {len(chunks)} | Time: {elapsed:.1f}s")
+            logger.info("═" * 60)
+            logger.info("")
             
             return IngestionResult(
                 success=True,
@@ -448,8 +522,21 @@ class IngestionPipeline:
         
         all_chunk_metadata: list[ChunkMetadata] = []
         
+        total_chunks = len(chunks)
+        validation_config = strategy.validation
+        
+        # Track validation stats
+        total_errors = 0
+        total_warnings = 0
+        skipped_entities = 0
+        stored_entities = 0
+        
         for i, chunk in enumerate(chunks):
-            # Extract entities + metadata via LLM
+            chunk_num = i + 1
+            
+            # ───────────────────────────────────────────────────────────
+            # STEP 3a: Extract from chunk (LLM call)
+            # ───────────────────────────────────────────────────────────
             result = await self.extractor.extract_chunk(
                 chunk_text=chunk.text,
                 chunk_id=chunk.id,
@@ -457,34 +544,141 @@ class IngestionPipeline:
                 source_document=source_document,
             )
             
-            # Merge entities into main graph
-            for entity_type, entities in result.graph.entities.items():
-                for entity in entities:
-                    # Tag entity with chunk info
-                    entity.metadata["source_chunk_id"] = chunk.id
-                    entity.metadata["source_chunk_index"] = chunk.chunk_index
-                    merged_graph.add_entity(entity)
+            # Get chunk context for logging
+            page = chunk.metadata.get("page_number", "?")
+            section = result.chunk_metadata.section_heading if result.chunk_metadata else None
+            section_short = section[:25] + "..." if section and len(section) > 25 else section
             
-            # Merge relationships
-            for rel in result.graph.relationships:
-                merged_graph.add_relationship(rel)
+            # ───────────────────────────────────────────────────────────
+            # Log: What was EXTRACTED
+            # ───────────────────────────────────────────────────────────
+            entity_summary = []
+            for etype, elist in result.graph.entities.items():
+                if elist:
+                    entity_summary.append(f"{len(elist)} {etype}")
+            
+            logger.info(f"│")
+            logger.info(f"│  ┌─ Chunk {chunk_num}/{total_chunks} (Page {page})")
+            if section_short:
+                logger.info(f"│  │  Section: {section_short}")
+            
+            if entity_summary:
+                logger.info(f"│  │  📦 Extracted: {', '.join(entity_summary)}")
+            else:
+                logger.info(f"│  │  📦 Extracted: (no entities found)")
+            
+            if result.graph.relationships:
+                logger.info(f"│  │  🔗 Relations: {len(result.graph.relationships)}")
+            
+            # ───────────────────────────────────────────────────────────
+            # Log: What was NOT VALIDATED (errors/warnings)
+            # ───────────────────────────────────────────────────────────
+            has_errors = len(result.validation_errors) > 0
+            has_warnings = len(result.validation_warnings) > 0
+            
+            if has_errors or has_warnings:
+                logger.info(f"│  │")
+                logger.info(f"│  │  ⚠️  Validation Issues:")
+                
+                for err in result.validation_errors:
+                    logger.info(f"│  │  │  ❌ ERROR: {err}")
+                    total_errors += 1
+                
+                for warn in result.validation_warnings:
+                    logger.info(f"│  │  │  ⚡ WARN: {warn}")
+                    total_warnings += 1
+            
+            # ───────────────────────────────────────────────────────────
+            # STEP 3b: Determine what to STORE based on validation mode
+            # ───────────────────────────────────────────────────────────
+            should_store = True
+            entities_to_store = []
+            
+            if validation_config.mode == "strict" and has_errors:
+                # Block all storage if any errors
+                should_store = False
+                logger.info(f"│  │")
+                logger.info(f"│  │  🚫 Storage: BLOCKED (strict mode + errors)")
+                skipped_entities += result.graph.entity_count
+                
+            elif validation_config.mode == "store_valid":
+                # Filter to only valid entities
+                for entity_type, entities in result.graph.entities.items():
+                    for entity in entities:
+                        # Check if this entity has issues
+                        entity_has_issue = False
+                        for err in result.validation_errors:
+                            if entity.display_name in err or entity.id in err:
+                                entity_has_issue = True
+                                break
+                        
+                        if not entity_has_issue:
+                            entities_to_store.append((entity_type, entity))
+                        else:
+                            skipped_entities += 1
+                
+                if skipped_entities > 0:
+                    logger.info(f"│  │")
+                    logger.info(f"│  │  🔶 Storage: {len(entities_to_store)} valid, {result.graph.entity_count - len(entities_to_store)} skipped")
+                
+            elif validation_config.mode == "ignore":
+                # Silent storage
+                pass
+            
+            # Default: warn mode - store everything
+            
+            # ───────────────────────────────────────────────────────────
+            # STEP 3c: Actually merge into graph
+            # ───────────────────────────────────────────────────────────
+            if should_store:
+                if validation_config.mode == "store_valid" and entities_to_store:
+                    # Store only validated entities
+                    for entity_type, entity in entities_to_store:
+                        entity.metadata["source_chunk_id"] = chunk.id
+                        entity.metadata["source_chunk_index"] = chunk.chunk_index
+                        merged_graph.add_entity(entity)
+                        stored_entities += 1
+                else:
+                    # Store all entities
+                    for entity_type, entities in result.graph.entities.items():
+                        for entity in entities:
+                            entity.metadata["source_chunk_id"] = chunk.id
+                            entity.metadata["source_chunk_index"] = chunk.chunk_index
+                            merged_graph.add_entity(entity)
+                            stored_entities += 1
+                    
+                    # Store relationships
+                    for rel in result.graph.relationships:
+                        merged_graph.add_relationship(rel)
+                
+                if validation_config.mode != "ignore":
+                    stored_count = result.graph.entity_count if validation_config.mode != "store_valid" else len(entities_to_store)
+                    if stored_count > 0:
+                        logger.info(f"│  │")
+                        logger.info(f"│  │  ✅ Stored: {stored_count} entities, {len(result.graph.relationships)} relationships")
             
             # Collect metadata
             if result.chunk_metadata:
-                # Add page number from chunk
                 result.chunk_metadata.page_number = chunk.metadata.get("page_number")
                 all_chunk_metadata.append(result.chunk_metadata)
             
             # Update progress
-            status.chunks_processed = i + 1
+            status.chunks_processed = chunk_num
             status.entities_extracted = merged_graph.entity_count
             status.relationships_extracted = merged_graph.relationship_count
             
-            logger.debug(
-                f"Chunk {i+1}/{len(chunks)}: "
-                f"{result.graph.entity_count} entities, "
-                f"section='{result.chunk_metadata.section_heading if result.chunk_metadata else 'N/A'}'"
-            )
+            logger.info(f"│  └─ Done")
+        
+        # ───────────────────────────────────────────────────────────
+        # Summary of validation
+        # ───────────────────────────────────────────────────────────
+        if total_errors > 0 or total_warnings > 0:
+            logger.info(f"│")
+            logger.info(f"│  📊 Validation Summary:")
+            logger.info(f"│     Errors: {total_errors} | Warnings: {total_warnings}")
+            logger.info(f"│     Mode: {validation_config.mode}")
+            if validation_config.mode in ["strict", "store_valid"]:
+                logger.info(f"│     Entities stored: {stored_entities} | Skipped: {skipped_entities}")
         
         return merged_graph, all_chunk_metadata
     

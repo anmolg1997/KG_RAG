@@ -6,11 +6,15 @@
   --bg-gradient: linear-gradient(135deg, #0a1929 0%, #102a43 50%, #0a1929 100%);
 }
 
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   @apply bg-midnight-950 text-midnight-100 font-sans antialiased;
   background: var(--bg-gradient);
   background-size: 400% 400%;
-  min-height: 100vh;
 }
 
 /* Scrollbar styling */

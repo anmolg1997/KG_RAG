@@ -1,18 +1,52 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   BeakerIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   DocumentTextIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline';
-import { extractionAPI, ExtractionResult } from '../services/api';
+import { extractionAPI, graphAPI, ExtractionResult, EntityDefinition } from '../services/api';
 
 export default function ExtractionPanel() {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ExtractionResult | null>(null);
-  const [activeEntityTab, setActiveEntityTab] = useState('contracts');
+  const [activeEntityTab, setActiveEntityTab] = useState<string>('');
+  
+  // Schema-agnostic: dynamically loaded from backend
+  const [entityTypes, setEntityTypes] = useState<string[]>([]);
+  const [schemaName, setSchemaName] = useState<string>('');
+  const [schemaEntities, setSchemaEntities] = useState<EntityDefinition[]>([]);
+  const [loadingSchema, setLoadingSchema] = useState(true);
+
+  // Load schema information on mount
+  useEffect(() => {
+    const loadSchema = async () => {
+      try {
+        const [schema, entities] = await Promise.all([
+          graphAPI.getSchema(),
+          graphAPI.getSchemaEntities(),
+        ]);
+        
+        setSchemaName(schema.active_schema);
+        setEntityTypes(schema.defined_entities);
+        setSchemaEntities(entities.entities);
+        
+        // Set first entity type as active tab
+        if (schema.defined_entities.length > 0) {
+          setActiveEntityTab(schema.defined_entities[0]);
+        }
+      } catch (error) {
+        console.error('Failed to load schema:', error);
+      } finally {
+        setLoadingSchema(false);
+      }
+    };
+    
+    loadSchema();
+  }, []);
 
   const handleExtract = async () => {
     if (!text.trim() || loading) return;
@@ -23,6 +57,15 @@ export default function ExtractionPanel() {
     try {
       const response = await extractionAPI.extract(text);
       setResult(response);
+      
+      // Set active tab to first entity type with results
+      const typesWithResults = Object.entries(response.entities)
+        .filter(([, entities]) => Array.isArray(entities) && entities.length > 0)
+        .map(([type]) => type);
+      
+      if (typesWithResults.length > 0) {
+        setActiveEntityTab(typesWithResults[0]);
+      }
     } catch (error) {
       console.error('Extraction error:', error);
     } finally {
@@ -31,40 +74,103 @@ export default function ExtractionPanel() {
   };
 
   const loadSampleText = () => {
-    setText(`LICENSE AGREEMENT
+    // Generic sample text that works with any schema
+    setText(`AGREEMENT
 
-This License Agreement ("Agreement") is entered into as of January 1, 2024, by and between:
+This Agreement is entered into as of January 15, 2024.
 
-LICENSOR: Acme Software Corporation, a Delaware corporation with offices at 123 Tech Drive, San Francisco, CA 94105 ("Licensor")
+PARTIES:
+1. First Party: Acme Corporation, located at 123 Business Ave, New York, NY 10001
+2. Second Party: TechStart Inc., located at 456 Innovation Drive, San Francisco, CA 94102
 
-LICENSEE: TechStart Inc., a California corporation with offices at 456 Innovation Way, Palo Alto, CA 94301 ("Licensee")
+TERMS:
 
-ARTICLE I - GRANT OF LICENSE
+Section 1 - Purpose
+This agreement establishes the terms and conditions for collaboration between the parties.
 
-1.1 License Grant. Subject to the terms and conditions of this Agreement, Licensor hereby grants to Licensee a non-exclusive, non-transferable license to use the Software for internal business purposes.
+Section 2 - Duration
+The term of this agreement shall be two (2) years from the effective date, unless terminated earlier in accordance with Section 5.
 
-1.2 License Fee. Licensee shall pay Licensor an annual license fee of $50,000 USD, payable within 30 days of the effective date and each anniversary thereof.
+Section 3 - Financial Terms
+The total value of this agreement is $150,000 USD, payable in quarterly installments of $18,750 each.
+Payment is due within 30 days of invoice receipt.
 
-ARTICLE II - TERM AND TERMINATION
+Section 4 - Confidentiality
+Both parties agree to maintain strict confidentiality regarding all proprietary information exchanged during the course of this agreement.
 
-2.1 Term. This Agreement shall commence on the Effective Date and continue for a period of three (3) years, unless earlier terminated as provided herein.
+Section 5 - Termination
+Either party may terminate this agreement with 60 days written notice. In case of material breach, termination may be immediate upon written notice.
 
-2.2 Termination for Breach. Either party may terminate this Agreement upon thirty (30) days written notice if the other party materially breaches any provision of this Agreement and fails to cure such breach within said notice period.
+Section 6 - Governing Law
+This agreement shall be governed by the laws of the State of Delaware.
 
-ARTICLE III - CONFIDENTIALITY
+SIGNATURES:
+_____________________
+John Smith, CEO
+Acme Corporation
+Date: January 15, 2024
 
-3.1 Confidential Information. Each party agrees to maintain the confidentiality of the other party's confidential information and not to disclose such information to any third party without prior written consent.
-
-ARTICLE IV - LIMITATION OF LIABILITY
-
-4.1 Limitation. In no event shall either party be liable for any indirect, incidental, special, or consequential damages arising out of this Agreement.`);
+_____________________
+Jane Doe, President
+TechStart Inc.
+Date: January 15, 2024`);
   };
 
-  const entityTypes = ['contracts', 'parties', 'clauses', 'obligations', 'dates', 'amounts'];
+  // Get the count for a specific entity type from results
+  const getEntityCount = (type: string): number => {
+    if (!result?.entities) return 0;
+    const entities = result.entities[type];
+    return Array.isArray(entities) ? entities.length : 0;
+  };
+
+  // Get entities for the active tab
+  const getActiveEntities = (): unknown[] => {
+    if (!result?.entities || !activeEntityTab) return [];
+    const entities = result.entities[activeEntityTab];
+    return Array.isArray(entities) ? entities : [];
+  };
+
+  // Get display name for an entity (tries common properties)
+  const getEntityDisplayName = (entity: Record<string, unknown>): string => {
+    return String(
+      entity.name || 
+      entity.title || 
+      entity.description || 
+      entity.text ||
+      entity.id || 
+      'Unnamed'
+    );
+  };
+
+  // Get a preview of entity properties
+  const getEntityPreview = (entity: Record<string, unknown>): string | null => {
+    const previewProps = ['summary', 'description', 'text', 'value', 'content'];
+    for (const prop of previewProps) {
+      if (entity[prop] && prop !== getEntityDisplayName(entity)) {
+        const value = String(entity[prop]);
+        return value.length > 150 ? value.slice(0, 150) + '...' : value;
+      }
+    }
+    return null;
+  };
 
   return (
     <div className="h-full overflow-y-auto p-4 lg:p-6">
       <div className="max-w-6xl mx-auto">
+        {/* Schema Info Banner */}
+        {schemaName && (
+          <div className="mb-6 glass rounded-xl p-4 flex items-center gap-3">
+            <InformationCircleIcon className="w-5 h-5 text-electric-400 flex-shrink-0" />
+            <div>
+              <span className="text-sm text-midnight-400">Active Schema: </span>
+              <span className="text-sm font-medium text-electric-400">{schemaName}</span>
+              <span className="text-sm text-midnight-500 ml-2">
+                ({entityTypes.length} entity types)
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Input */}
           <div className="space-y-4">
@@ -81,13 +187,13 @@ ARTICLE IV - LIMITATION OF LIABILITY
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Paste contract text here for entity extraction..."
+              placeholder="Paste document text here for entity extraction..."
               className="w-full h-96 glass rounded-xl p-4 bg-midnight-900/50 border-midnight-700 focus:border-electric-500 focus:ring-1 focus:ring-electric-500 resize-none"
             />
             
             <button
               onClick={handleExtract}
-              disabled={!text.trim() || loading}
+              disabled={!text.trim() || loading || loadingSchema}
               className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-electric-500 text-midnight-950 font-medium hover:bg-electric-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? (
@@ -102,6 +208,26 @@ ARTICLE IV - LIMITATION OF LIABILITY
                 </>
               )}
             </button>
+            
+            {/* Schema Entity Types Preview */}
+            {schemaEntities.length > 0 && (
+              <div className="glass rounded-xl p-4">
+                <h4 className="text-sm font-medium text-midnight-300 mb-3">
+                  Entity Types in Schema
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {schemaEntities.map((entity) => (
+                    <span
+                      key={entity.name}
+                      className="px-2 py-1 text-xs rounded bg-midnight-800 text-midnight-300"
+                      title={entity.description}
+                    >
+                      {entity.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Results */}
@@ -128,6 +254,9 @@ ARTICLE IV - LIMITATION OF LIABILITY
                       </p>
                       <p className="text-sm text-midnight-400">
                         {result.entity_count} entities, {result.relationship_count} relationships
+                        {result.schema_name && (
+                          <span className="ml-2 text-electric-400">({result.schema_name})</span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -155,11 +284,11 @@ ARTICLE IV - LIMITATION OF LIABILITY
                   )}
                 </div>
 
-                {/* Entity Tabs */}
+                {/* Entity Tabs - Dynamically generated from results */}
                 <div className="glass rounded-xl overflow-hidden">
                   <div className="flex border-b border-midnight-700/50 overflow-x-auto">
-                    {entityTypes.map((type) => {
-                      const count = (result.entities as any)[type]?.length || 0;
+                    {Object.keys(result.entities).map((type) => {
+                      const count = getEntityCount(type);
                       return (
                         <button
                           key={type}
@@ -170,8 +299,10 @@ ARTICLE IV - LIMITATION OF LIABILITY
                               : 'text-midnight-400 hover:text-midnight-200'
                           }`}
                         >
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                          <span className="ml-2 px-1.5 py-0.5 text-xs rounded-full bg-midnight-700/50">
+                          {type}
+                          <span className={`ml-2 px-1.5 py-0.5 text-xs rounded-full ${
+                            count > 0 ? 'bg-electric-500/20 text-electric-400' : 'bg-midnight-700/50'
+                          }`}>
                             {count}
                           </span>
                         </button>
@@ -180,33 +311,47 @@ ARTICLE IV - LIMITATION OF LIABILITY
                   </div>
                   
                   <div className="p-4 max-h-80 overflow-y-auto">
-                    {(result.entities as any)[activeEntityTab]?.length > 0 ? (
+                    {getActiveEntities().length > 0 ? (
                       <div className="space-y-3">
-                        {(result.entities as any)[activeEntityTab].map((entity: any, i: number) => (
-                          <div key={i} className="p-3 bg-midnight-800/50 rounded-lg">
-                            <div className="flex items-start gap-2">
-                              <DocumentTextIcon className="w-4 h-4 text-midnight-400 mt-0.5" />
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-sm text-midnight-100">
-                                  {entity.name || entity.title || entity.description || entity.id}
-                                </p>
-                                {entity.type && (
-                                  <span className="inline-block mt-1 px-2 py-0.5 text-xs rounded bg-midnight-700 text-midnight-300">
-                                    {entity.type}
-                                  </span>
-                                )}
-                                {entity.clause_type && (
-                                  <span className="inline-block mt-1 px-2 py-0.5 text-xs rounded bg-midnight-700 text-midnight-300">
-                                    {entity.clause_type}
-                                  </span>
-                                )}
-                                {entity.summary && (
-                                  <p className="mt-2 text-xs text-midnight-400">{entity.summary}</p>
-                                )}
+                        {getActiveEntities().map((entity: unknown, i: number) => {
+                          const e = entity as Record<string, unknown>;
+                          return (
+                            <div key={i} className="p-3 bg-midnight-800/50 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <DocumentTextIcon className="w-4 h-4 text-midnight-400 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-sm text-midnight-100">
+                                    {getEntityDisplayName(e)}
+                                  </p>
+                                  
+                                  {/* Show type/category if present */}
+                                  {(e.type || e.category || e.entity_type) && (
+                                    <span className="inline-block mt-1 px-2 py-0.5 text-xs rounded bg-midnight-700 text-midnight-300">
+                                      {String(e.type || e.category || e.entity_type)}
+                                    </span>
+                                  )}
+                                  
+                                  {/* Show preview of content */}
+                                  {getEntityPreview(e) && (
+                                    <p className="mt-2 text-xs text-midnight-400">
+                                      {getEntityPreview(e)}
+                                    </p>
+                                  )}
+                                  
+                                  {/* Show all properties as collapsible */}
+                                  <details className="mt-2">
+                                    <summary className="text-xs text-midnight-500 cursor-pointer hover:text-midnight-300">
+                                      View all properties
+                                    </summary>
+                                    <pre className="mt-2 text-xs text-midnight-400 bg-midnight-900/50 p-2 rounded overflow-x-auto">
+                                      {JSON.stringify(e, null, 2)}
+                                    </pre>
+                                  </details>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="text-sm text-midnight-500 text-center py-8">
@@ -215,12 +360,33 @@ ARTICLE IV - LIMITATION OF LIABILITY
                     )}
                   </div>
                 </div>
+                
+                {/* Relationships Section */}
+                {result.relationships && result.relationships.length > 0 && (
+                  <div className="glass rounded-xl p-4">
+                    <h4 className="text-sm font-medium text-midnight-300 mb-3">
+                      Relationships ({result.relationships.length})
+                    </h4>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {result.relationships.map((rel, i) => (
+                        <div key={i} className="text-xs bg-midnight-800/50 p-2 rounded flex items-center gap-2">
+                          <span className="text-midnight-300 truncate">{rel.source_id}</span>
+                          <span className="text-electric-400 flex-shrink-0">→ {rel.type} →</span>
+                          <span className="text-midnight-300 truncate">{rel.target_id}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <div className="glass rounded-xl p-12 text-center">
                 <BeakerIcon className="w-12 h-12 text-midnight-600 mx-auto mb-4" />
                 <p className="text-midnight-400">
                   Paste text and click "Extract Entities" to see results
+                </p>
+                <p className="text-xs text-midnight-500 mt-2">
+                  Entities will be extracted based on the active schema
                 </p>
               </div>
             )}

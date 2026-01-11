@@ -92,8 +92,9 @@ This document explains the **complete architecture** of the KG-RAG system, break
 │  • Relationships (Edges)     │         │  • Query Understanding          │
 │  • Cypher Queries            │         │  • Response Generation          │
 │                              │         │                                 │
-│  Ports: 7474 (HTTP)          │         │  Via LiteLLM (model agnostic)   │
-│         7687 (Bolt)          │         │                                 │
+│  Port 7474: HTTP Browser UI  │         │  Via LiteLLM (model agnostic)   │
+│  Port 7687: Bolt Protocol    │         │                                 │
+│             (app connection) │         │                                 │
 └──────────────────────────────┘         └─────────────────────────────────┘
 ```
 
@@ -369,8 +370,16 @@ User Question
    - Output: Errors/warnings
    - How: Check required properties, valid relationships
 
+   **Validation Modes** (configured in `extraction_strategy.validation.mode`):
+   | Mode | Behavior | Use Case |
+   |------|----------|----------|
+   | `ignore` | No validation, store all | Speed-focused |
+   | `warn` | Log issues, store all | General use (default) |
+   | `store_valid` | Skip invalid, store valid | Quality-focused |
+   | `strict` | Block if ANY errors | Compliance |
+
 5. **Storage** (`dynamic_repository.py`)
-   - Input: Validated DynamicGraph
+   - Input: Validated DynamicGraph (based on validation mode)
    - Output: Data in Neo4j
    - How: MERGE nodes, CREATE relationships
 
@@ -392,24 +401,54 @@ User Question
 
 ## Configuration System
 
+### Neo4j Database Connection
+
+Neo4j exposes two ports with different purposes:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| **7474** | HTTP | Web-based Neo4j Browser UI for visual graph exploration and Cypher queries |
+| **7687** | Bolt | High-performance binary protocol for application connections |
+
+**Access Options:**
+- **Local Browser**: http://localhost:7474 - Traditional UI from your Docker container
+- **Hosted Browser**: https://browser.neo4j.io/ - Neo4j's cloud-hosted browser, connect to any instance
+
+The backend connects via **Bolt protocol** (port 7687) for optimal performance.
+
 ### Environment Variables
 
 All configuration is via environment variables (in `.env` file):
 
 ```bash
-# Database
+# Database (Bolt protocol for application connection)
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
+NEO4J_MAX_POOL_SIZE=50       # Connection pool size
 
 # LLM
 DEFAULT_LLM_MODEL=gpt-4o-mini
 OPENAI_API_KEY=sk-...
 
+# Extraction
+EXTRACTION_MODEL=gpt-4o-mini
+EXTRACTION_TEMPERATURE=0.0   # Lower = more deterministic
+EXTRACTION_MAX_TOKENS=4096
+
+# RAG
+RAG_MODEL=gpt-4o-mini
+RAG_TEMPERATURE=0.7
+RAG_MAX_TOKENS=2048
+RAG_MAX_CONVERSATION_HISTORY=10  # Max turns to keep
+
 # Schema
 ACTIVE_SCHEMA=contract        # Which schema to use by default
 
-# Processing
+# Strategy
+DEFAULT_STRATEGY_PRESET=balanced  # minimal, balanced, comprehensive, speed, research, strict
+
+# Processing (can be overridden by strategy)
 CHUNK_SIZE=1000              # Characters per chunk
 CHUNK_OVERLAP=200            # Overlap between chunks
 ```
@@ -762,6 +801,29 @@ STEP 4: For EACH chunk → Extract entities + metadata (LLM)
          ├─ Parse relationships → DynamicRelationship[]
          ├─ Parse metadata → {section_heading, temporal_refs, key_terms}
          └─ Validate against schema
+  
+  └── STEP 4d: Validation & Storage Decision
+      └─ [LOGIC: Based on strategy.validation.mode]
+      │
+      ├─ IF mode="ignore"     → No validation, store all
+      ├─ IF mode="warn"       → Log issues, store all (default)
+      ├─ IF mode="store_valid"→ Skip invalid entities, store valid
+      └─ IF mode="strict"     → Block chunk storage if any errors
+      
+      **Per-Chunk Log Output:**
+      ```
+      │
+      │  ┌─ Chunk 3/10 (Page 2)
+      │  │  Section: ARTICLE 5: TERMINATION
+      │  │  📦 Extracted: 2 Party, 1 Date
+      │  │  🔗 Relations: 3
+      │  │
+      │  │  ⚠️  Validation Issues:
+      │  │  │  ⚡ WARN: Party 'Acme Corp' missing required property: address
+      │  │
+      │  │  ✅ Stored: 3 entities, 3 relationships
+      │  └─ Done
+      ```
 
 STEP 5: Apply metadata to chunks
   └─ [LOGIC]

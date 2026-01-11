@@ -4,7 +4,7 @@ Neo4j database client with connection pooling and async support.
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
 from neo4j.exceptions import ServiceUnavailable, AuthError
@@ -46,10 +46,12 @@ class Neo4jClient:
             return
 
         try:
+            from app.config import settings
+            
             self._driver = AsyncGraphDatabase.driver(
                 self.uri,
                 auth=(self.user, self.password),
-                max_connection_pool_size=50,
+                max_connection_pool_size=settings.neo4j_max_pool_size,
             )
             # Verify connectivity
             await self._driver.verify_connectivity()
@@ -178,6 +180,115 @@ class Neo4jClient:
             "labels": labels,
             "relationship_types": rel_types,
         }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Enterprise-Level Index Management
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    async def get_existing_indexes(self, database: str = "neo4j") -> Set[str]:
+        """
+        Get all existing index names in the database.
+        
+        Returns:
+            Set of index names
+        """
+        query = "SHOW INDEXES YIELD name RETURN name"
+        async with self.session(database=database) as session:
+            result = await session.run(query)
+            records = await result.data()
+            return {r["name"] for r in records}
+    
+    async def index_exists(self, index_name: str, database: str = "neo4j") -> bool:
+        """
+        Check if a specific index exists.
+        
+        Args:
+            index_name: Name of the index to check
+            database: Database name
+            
+        Returns:
+            True if index exists, False otherwise
+        """
+        existing = await self.get_existing_indexes(database)
+        return index_name in existing
+    
+    async def ensure_index(
+        self,
+        index_name: str,
+        label: str,
+        property_name: str,
+        database: str = "neo4j",
+    ) -> bool:
+        """
+        Create an index only if it doesn't already exist.
+        
+        This is the enterprise-level approach: check first, then create.
+        Avoids noisy "index already exists" notifications from Neo4j.
+        
+        Args:
+            index_name: Unique name for the index
+            label: Node label to index
+            property_name: Property to index
+            database: Database name
+            
+        Returns:
+            True if index was created, False if it already existed
+        """
+        if await self.index_exists(index_name, database):
+            return False  # Already exists, nothing to do
+        
+        # Create the index (without IF NOT EXISTS since we already checked)
+        query = f"CREATE INDEX {index_name} FOR (n:{label}) ON (n.{property_name})"
+        try:
+            await self.execute_write(query, database=database)
+            logger.debug(f"Created index: {index_name} on {label}.{property_name}")
+            return True
+        except Exception as e:
+            # Handle race condition: index might have been created between check and create
+            if "already exists" in str(e).lower():
+                return False
+            raise
+    
+    async def ensure_indexes_batch(
+        self,
+        indexes: list[tuple[str, str, str]],
+        database: str = "neo4j",
+    ) -> dict[str, int]:
+        """
+        Efficiently ensure multiple indexes exist.
+        
+        Checks all existing indexes once, then only creates missing ones.
+        
+        Args:
+            indexes: List of (index_name, label, property_name) tuples
+            database: Database name
+            
+        Returns:
+            Summary with counts: {"created": N, "existed": M, "failed": F}
+        """
+        existing = await self.get_existing_indexes(database)
+        
+        created = 0
+        existed = 0
+        failed = 0
+        
+        for index_name, label, property_name in indexes:
+            if index_name in existing:
+                existed += 1
+                continue
+            
+            try:
+                query = f"CREATE INDEX {index_name} FOR (n:{label}) ON (n.{property_name})"
+                await self.execute_write(query, database=database)
+                created += 1
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    existed += 1
+                else:
+                    logger.error(f"Failed to create index {index_name}: {e}")
+                    failed += 1
+        
+        return {"created": created, "existed": existed, "failed": failed}
 
 
 # Singleton instance

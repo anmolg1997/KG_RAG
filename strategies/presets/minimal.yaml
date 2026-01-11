@@ -7,6 +7,12 @@ extraction:
   name: "minimal"
   description: "Minimal extraction - entities only, no chunk storage"
   
+  # Chunking settings
+  chunking:
+    strategy: "fixed"
+    chunk_size: 1500  # Larger chunks for speed
+    chunk_overlap: 100
+  
   chunks:
     enabled: false
     store_text: false
@@ -44,6 +50,13 @@ extraction:
     enabled: false
     store_source_text: true  # Store source in entity since no chunks
     store_chunk_index: false
+  
+  # Validation - ignore for fastest processing
+  validation:
+    mode: "ignore"
+    log_level: "warning"
+    fail_on_missing_required: false
+    fail_on_broken_relationships: true
 
 retrieval:
   name: "minimal"

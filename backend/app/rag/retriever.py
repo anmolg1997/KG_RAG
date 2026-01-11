@@ -63,6 +63,16 @@ class RetrievalResult:
 
 
 @dataclass
+class CypherQuery:
+    """A tracked Cypher query."""
+    description: str
+    query: str
+    params: dict[str, Any]
+    result_count: int = 0
+    execution_time_ms: float = 0
+
+
+@dataclass
 class RetrievalContext:
     """Context retrieved from the knowledge graph."""
     
@@ -76,6 +86,9 @@ class RetrievalContext:
     # Retrieval metadata
     search_methods_used: list[str] = field(default_factory=list)
     
+    # Debug info - Cypher queries executed
+    cypher_queries: list[CypherQuery] = field(default_factory=list)
+    
     @property
     def entity_count(self) -> int:
         return len(self.entities)
@@ -87,6 +100,38 @@ class RetrievalContext:
     @property
     def is_empty(self) -> bool:
         return len(self.entities) == 0 and len(self.chunks) == 0
+    
+    def to_debug_dict(self) -> dict[str, Any]:
+        """Convert retrieval context to debug dictionary."""
+        return {
+            "query_analysis": self.query_plan,
+            "cypher_queries": [
+                {
+                    "description": q.description,
+                    "query": q.query,
+                    "params": q.params,
+                    "result_count": q.result_count,
+                    "execution_time_ms": q.execution_time_ms,
+                }
+                for q in self.cypher_queries
+            ],
+            "retrieval_results": {
+                "entities": self.entities[:20],  # Limit for response size
+                "chunks": [
+                    {
+                        "id": c.get("id"),
+                        "text": c.get("text", "")[:300] + "..." if len(c.get("text", "")) > 300 else c.get("text", ""),
+                        "page_number": c.get("page_number"),
+                        "section_heading": c.get("section_heading"),
+                        "key_terms": c.get("key_terms", [])[:10],
+                    }
+                    for c in self.chunks[:10]
+                ],
+                "entity_count": len(self.entities),
+                "chunk_count": len(self.chunks),
+            },
+            "search_methods_used": self.search_methods_used,
+        }
 
 
 class GraphRetriever:
@@ -122,7 +167,8 @@ class GraphRetriever:
             schema_loader = get_schema_loader()
             schema = schema_loader.get_active_schema()
             self.entity_types = [e.name for e in schema.entities]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Could not load schema entity types, using default: {e}")
             self.entity_types = ["Entity"]
     
     async def retrieve(
@@ -142,58 +188,92 @@ class GraphRetriever:
         """
         methods_used = []
         all_results: list[RetrievalResult] = []
+        cypher_queries: list[CypherQuery] = []
         
-        # Step 1: Analyze query
+        # ─────────────────────────────────────────────────────────────
+        # STEP 2a: Analyze query (LLM)
+        # ─────────────────────────────────────────────────────────────
+        logger.info("│  ├─ Analyzing query...")
         query_analysis = await self._analyze_query(query)
-        logger.debug(f"Query analysis: {query_analysis}")
         
-        # Step 2: Execute retrieval methods based on strategy
+        intent = query_analysis.get("intent", "general")
+        entity_types = query_analysis.get("entity_types", [])
+        keywords = query_analysis.get("keywords", [])
+        
+        logger.info(f"│  │  Intent: {intent}")
+        logger.info(f"│  │  Target entities: {', '.join(entity_types[:3]) if entity_types else 'any'}")
+        logger.debug(f"│  │  Keywords: {keywords}")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 2b: Execute retrieval methods
+        # ─────────────────────────────────────────────────────────────
         search_config = self.strategy.search
+        logger.info("│  ├─ Executing search methods:")
         
-        # 2a: Graph traversal
+        # 2b-i: Graph traversal
         if search_config.graph_traversal.enabled:
-            graph_results = await self._retrieve_via_graph(
+            logger.info("│  │  ├─ Graph traversal...")
+            graph_results, graph_queries = await self._retrieve_via_graph(
                 query_analysis, document_id
             )
             all_results.extend(graph_results)
+            cypher_queries.extend(graph_queries)
             if graph_results:
                 methods_used.append("graph_traversal")
+                logger.info(f"│  │  │  └─ Found {len(graph_results)} results")
         
-        # 2b: Chunk text search
+        # 2b-ii: Chunk text search
         if search_config.chunk_text_search.enabled and self.graph_repo:
-            chunk_results = await self._retrieve_via_chunk_text(
+            logger.info("│  │  ├─ Chunk text search...")
+            chunk_results, chunk_queries = await self._retrieve_via_chunk_text(
                 query_analysis, document_id
             )
             all_results.extend(chunk_results)
+            cypher_queries.extend(chunk_queries)
             if chunk_results:
                 methods_used.append("chunk_text_search")
+                logger.info(f"│  │  │  └─ Found {len(chunk_results)} results")
         
-        # 2c: Keyword matching
+        # 2b-iii: Keyword matching
         if search_config.keyword_matching.enabled and self.graph_repo:
-            keyword_results = await self._retrieve_via_keywords(
+            logger.info("│  │  ├─ Keyword matching...")
+            keyword_results, keyword_queries = await self._retrieve_via_keywords(
                 query_analysis, document_id
             )
             all_results.extend(keyword_results)
+            cypher_queries.extend(keyword_queries)
             if keyword_results:
                 methods_used.append("keyword_matching")
+                logger.info(f"│  │  │  └─ Found {len(keyword_results)} results")
         
-        # 2d: Temporal filtering
+        # 2b-iv: Temporal filtering
         if search_config.temporal_filtering.enabled and self.graph_repo:
             if query_analysis.get("has_temporal_aspect"):
-                temporal_results = await self._retrieve_via_temporal(
+                logger.info("│  │  ├─ Temporal filtering...")
+                temporal_results, temporal_queries = await self._retrieve_via_temporal(
                     query_analysis, document_id
                 )
                 all_results.extend(temporal_results)
+                cypher_queries.extend(temporal_queries)
                 if temporal_results:
                     methods_used.append("temporal_filtering")
+                    logger.info(f"│  │  │  └─ Found {len(temporal_results)} results")
         
-        # Step 3: Score and rank results
+        logger.info(f"│  │  └─ Total raw results: {len(all_results)}")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 2c: Score and deduplicate
+        # ─────────────────────────────────────────────────────────────
+        logger.info("│  ├─ Scoring and deduplicating...")
         scored_results = self._score_results(all_results)
-        
-        # Step 4: Deduplicate and limit
         entities, chunks, relationships = self._process_results(scored_results)
         
-        # Step 5: Format context
+        logger.info(f"│  │  └─ After dedup: {len(entities)} entities, {len(chunks)} chunks")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 2d: Format context
+        # ─────────────────────────────────────────────────────────────
+        logger.info("│  └─ Formatting context...")
         raw_text = self._format_context(entities, chunks, relationships, query)
         
         return RetrievalContext(
@@ -203,6 +283,7 @@ class GraphRetriever:
             raw_text=raw_text,
             query_plan=query_analysis,
             search_methods_used=methods_used,
+            cypher_queries=cypher_queries,
         )
     
     async def _analyze_query(self, query: str) -> dict[str, Any]:
@@ -244,9 +325,11 @@ class GraphRetriever:
         self,
         query_analysis: dict[str, Any],
         document_id: Optional[str],
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], list[CypherQuery]]:
         """Retrieve via graph traversal."""
+        import time
         results = []
+        queries = []
         entity_types = query_analysis.get("entity_types", self.entity_types[:3])
         filters = query_analysis.get("filters", {})
         max_depth = self.strategy.search.graph_traversal.max_depth
@@ -281,7 +364,19 @@ class GraphRetriever:
                 params = {"limit": self.strategy.limits.max_entities}
             
             try:
+                start_time = time.time()
                 query_results = await self.neo4j.execute_query(query, params)
+                exec_time = (time.time() - start_time) * 1000
+                
+                # Track this query
+                queries.append(CypherQuery(
+                    description=f"Get {entity_type} entities",
+                    query=query.strip(),
+                    params=params,
+                    result_count=len(query_results),
+                    execution_time_ms=exec_time,
+                ))
+                
                 for r in query_results:
                     entity = dict(r["n"])
                     entity["_type"] = entity_type
@@ -298,16 +393,19 @@ class GraphRetriever:
         if results and max_depth > 1:
             entity_ids = [r.item.get("id") for r in results if r.item.get("id")]
             if entity_ids:
-                expanded = await self._expand_graph_context(entity_ids)
+                expanded, expand_queries = await self._expand_graph_context(entity_ids)
                 results.extend(expanded)
+                queries.extend(expand_queries)
         
-        return results
+        return results, queries
     
     async def _expand_graph_context(
         self, entity_ids: list[str]
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], list[CypherQuery]]:
         """Expand context by following relationships."""
+        import time
         results = []
+        queries = []
         
         query = """
         MATCH (n)
@@ -321,31 +419,46 @@ class GraphRetriever:
                    type: type(r)
                }) as relationships
         """
+        params = {"ids": entity_ids}
         
         try:
-            query_results = await self.neo4j.execute_query(query, {"ids": entity_ids})
+            start_time = time.time()
+            query_results = await self.neo4j.execute_query(query, params)
+            exec_time = (time.time() - start_time) * 1000
+            
+            entity_count = 0
             if query_results:
                 result = query_results[0]
                 for entity in result.get("entities", []):
                     if entity:
+                        entity_count += 1
                         results.append(RetrievalResult(
                             source="graph",
                             item=dict(entity),
                             score=self.strategy.scoring.graph_match_weight * 0.8,  # Lower for expanded
                             item_type="entity",
                         ))
+            
+            queries.append(CypherQuery(
+                description="Expand graph context via relationships",
+                query=query.strip(),
+                params=params,
+                result_count=entity_count,
+                execution_time_ms=exec_time,
+            ))
         except Exception as e:
             logger.debug(f"Graph expansion failed: {e}")
         
-        return results
+        return results, queries
     
     async def _retrieve_via_chunk_text(
         self,
         query_analysis: dict[str, Any],
         document_id: Optional[str],
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], list[CypherQuery]]:
         """Retrieve via chunk text search."""
         results = []
+        queries = []
         search_text = query_analysis.get("search_text", "")
         keywords = query_analysis.get("keywords", [])
         
@@ -357,11 +470,21 @@ class GraphRetriever:
                 continue
             
             try:
-                chunks = await self.graph_repo.search_chunks_by_text(
+                chunks, cypher_info = await self.graph_repo.search_chunks_by_text(
                     search_text=term,
                     document_id=document_id,
                     limit=self.strategy.limits.max_chunks // 2,
+                    return_query=True,
                 )
+                
+                if cypher_info:
+                    queries.append(CypherQuery(
+                        description=f"Search chunks for '{term[:30]}...'",
+                        query=cypher_info.get("query", ""),
+                        params=cypher_info.get("params", {}),
+                        result_count=len(chunks),
+                        execution_time_ms=cypher_info.get("execution_time_ms", 0),
+                    ))
                 
                 for chunk in chunks:
                     results.append(RetrievalResult(
@@ -373,26 +496,37 @@ class GraphRetriever:
             except Exception as e:
                 logger.debug(f"Chunk text search failed for '{term}': {e}")
         
-        return results
+        return results, queries
     
     async def _retrieve_via_keywords(
         self,
         query_analysis: dict[str, Any],
         document_id: Optional[str],
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], list[CypherQuery]]:
         """Retrieve via keyword matching on extracted key terms."""
         results = []
+        queries = []
         keywords = query_analysis.get("keywords", [])
         
         if not keywords:
-            return results
+            return results, queries
         
         try:
-            matches = await self.graph_repo.search_chunks_by_key_terms(
+            matches, cypher_info = await self.graph_repo.search_chunks_by_key_terms(
                 terms=keywords,
                 document_id=document_id,
                 limit=self.strategy.limits.max_chunks // 2,
+                return_query=True,
             )
+            
+            if cypher_info:
+                queries.append(CypherQuery(
+                    description=f"Match key terms: {', '.join(keywords[:3])}",
+                    query=cypher_info.get("query", ""),
+                    params=cypher_info.get("params", {}),
+                    result_count=len(matches),
+                    execution_time_ms=cypher_info.get("execution_time_ms", 0),
+                ))
             
             for match in matches:
                 chunk = match.get("chunk", {})
@@ -410,20 +544,31 @@ class GraphRetriever:
         except Exception as e:
             logger.debug(f"Keyword search failed: {e}")
         
-        return results
+        return results, queries
     
     async def _retrieve_via_temporal(
         self,
         query_analysis: dict[str, Any],
         document_id: Optional[str],
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], list[CypherQuery]]:
         """Retrieve chunks with temporal references."""
         results = []
+        queries = []
         
         try:
-            chunks = await self.graph_repo.get_chunks_with_temporal_refs(
+            chunks, cypher_info = await self.graph_repo.get_chunks_with_temporal_refs(
                 document_id=document_id,
+                return_query=True,
             )
+            
+            if cypher_info:
+                queries.append(CypherQuery(
+                    description="Get chunks with temporal references",
+                    query=cypher_info.get("query", ""),
+                    params=cypher_info.get("params", {}),
+                    result_count=len(chunks),
+                    execution_time_ms=cypher_info.get("execution_time_ms", 0),
+                ))
             
             for chunk in chunks:
                 results.append(RetrievalResult(
@@ -435,7 +580,7 @@ class GraphRetriever:
         except Exception as e:
             logger.debug(f"Temporal search failed: {e}")
         
-        return results
+        return results, queries
     
     def _score_results(
         self, results: list[RetrievalResult]

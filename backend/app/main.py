@@ -24,10 +24,69 @@ from app.api.routes import (
 )
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# DEBUG mode: full details with timestamps and module names
+# INFO mode: clean output for progress visibility
+if settings.debug:
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_level = logging.DEBUG
+else:
+    log_format = "%(message)s"  # Clean output for INFO logs
+    log_level = logging.INFO
+
+logging.basicConfig(level=log_level, format=log_format)
+
+
+class ThirdPartyNoiseFilter(logging.Filter):
+    """
+    Smart filter for third-party library logs.
+    
+    Instead of blanket suppression (which hides critical info),
+    this filter selectively removes known noisy patterns while
+    preserving warnings, errors, and useful info messages.
+    """
+    
+    # Patterns that are known to be noisy/repetitive at INFO level
+    NOISE_PATTERNS = [
+        # httpx/httpcore connection pool messages
+        "HTTP Request:",
+        "load_ssl_context",
+        "connect_tcp.started",
+        "connect_tcp.complete",
+        "send_request_headers",
+        "receive_response_headers",
+        "receive_response_body",
+        "close.started",
+        "close.complete",
+        # urllib3 pool messages
+        "Starting new HTTP",
+        "Resetting dropped connection",
+        # Generic connection noise
+        "connection_acquired",
+        "connection_released",
+    ]
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Always allow warnings, errors, and critical
+        if record.levelno >= logging.WARNING:
+            return True
+        
+        message = record.getMessage()
+        
+        # Filter out known noisy patterns at DEBUG/INFO
+        for pattern in self.NOISE_PATTERNS:
+            if pattern in message:
+                return False
+        
+        return True
+
+
+# Apply smart filter to third-party loggers (instead of blanket level suppression)
+_noise_filter = ThirdPartyNoiseFilter()
+for third_party_logger in ["httpx", "httpcore", "urllib3"]:
+    logging.getLogger(third_party_logger).addFilter(_noise_filter)
+
+# Note: openai and litellm are handled separately in llm.py with API key masking
+
 logger = logging.getLogger(__name__)
 
 

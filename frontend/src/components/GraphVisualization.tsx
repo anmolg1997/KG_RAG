@@ -15,14 +15,33 @@ interface GraphData {
   links: { source: string; target: string; type: string }[];
 }
 
-const nodeColors: Record<string, string> = {
-  Contract: '#38b2ac',
-  Party: '#f59e0b',
-  Clause: '#8b5cf6',
-  Obligation: '#ef4444',
-  ContractDate: '#10b981',
-  Amount: '#3b82f6',
-  default: '#64748b',
+// Dynamic color palette for any entity type
+const colorPalette = [
+  '#38b2ac', // teal
+  '#f59e0b', // amber
+  '#8b5cf6', // purple
+  '#ef4444', // red
+  '#10b981', // emerald
+  '#3b82f6', // blue
+  '#ec4899', // pink
+  '#f97316', // orange
+  '#06b6d4', // cyan
+  '#84cc16', // lime
+  '#a855f7', // violet
+  '#14b8a6', // teal variant
+];
+
+// Cache for consistent colors per label
+const labelColorMap: Record<string, string> = {};
+let colorIndex = 0;
+
+const getNodeColor = (label: string): string => {
+  if (!label) return '#64748b';
+  if (!labelColorMap[label]) {
+    labelColorMap[label] = colorPalette[colorIndex % colorPalette.length];
+    colorIndex++;
+  }
+  return labelColorMap[label];
 };
 
 export default function GraphVisualization() {
@@ -34,6 +53,7 @@ export default function GraphVisualization() {
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [lastRefresh, setLastRefresh] = useState(0);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -68,6 +88,7 @@ export default function GraphVisualization() {
       });
       setGraphStats(stats);
       setGraphData(vizData);
+      setLastRefresh(Date.now());
     } catch (error) {
       console.error('Failed to fetch graph data:', error);
     } finally {
@@ -75,9 +96,29 @@ export default function GraphVisualization() {
     }
   }, [nodeLimit, setGraphStats, setGraphData]);
 
+  // Fetch data on mount
   useEffect(() => {
     fetchGraphData();
   }, [fetchGraphData]);
+
+  // Auto-refresh when component becomes visible (tab switch)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchGraphData();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [fetchGraphData]);
+
+  // Also refresh if graphStats change significantly (new data uploaded)
+  useEffect(() => {
+    if (graphStats?.total_nodes && !data?.nodes.length) {
+      fetchGraphData();
+    }
+  }, [graphStats?.total_nodes, data?.nodes.length, fetchGraphData]);
 
   const handleNodeClick = useCallback((node: GraphNode) => {
     setSelectedNode(node);
@@ -107,6 +148,33 @@ export default function GraphVisualization() {
 
   return (
     <div ref={containerRef} className="h-full flex flex-col">
+      {/* Stats Bar */}
+      {graphStats && (
+        <div className="p-3 border-b border-midnight-800/50 bg-midnight-900/30 flex items-center gap-6 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-midnight-400">Neo4j Stats:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-electric-400 font-semibold">{graphStats.total_nodes}</span>
+            <span className="text-midnight-400">nodes</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-purple-400 font-semibold">{graphStats.total_relationships}</span>
+            <span className="text-midnight-400">relationships</span>
+          </div>
+          {graphStats.node_counts && Object.entries(graphStats.node_counts)
+            .filter(([key]) => key !== 'relationships')
+            .slice(0, 5)
+            .map(([type, count]) => (
+              <div key={type} className="flex items-center gap-1 text-xs">
+                <span className="text-midnight-500">{type}:</span>
+                <span className="text-midnight-300">{count as number}</span>
+              </div>
+            ))
+          }
+        </div>
+      )}
+      
       {/* Controls */}
       <div className="p-4 border-b border-midnight-800/50 flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
@@ -173,7 +241,7 @@ export default function GraphVisualization() {
               backgroundColor="transparent"
               nodeId="id"
               nodeLabel={(node: any) => node.name || node.title || node.id}
-              nodeColor={(node: any) => nodeColors[node._label] || nodeColors.default}
+              nodeColor={(node: any) => getNodeColor(node._label)}
               nodeRelSize={6}
               linkColor={() => 'rgba(100, 116, 139, 0.3)'}
               linkWidth={1}
@@ -192,25 +260,28 @@ export default function GraphVisualization() {
             </div>
           )}
 
-          {/* Legend */}
-          <div className="absolute bottom-4 left-4 glass rounded-xl p-4">
-            <h4 className="text-xs font-semibold text-midnight-400 uppercase tracking-wider mb-3">
-              Node Types
-            </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(nodeColors)
-                .filter(([key]) => key !== 'default')
-                .map(([label, color]) => (
-                  <div key={label} className="flex items-center gap-2">
-                    <div
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="text-xs text-midnight-300">{label}</span>
-                  </div>
-                ))}
+          {/* Legend - Dynamic based on actual data */}
+          {data && data.nodes.length > 0 && (
+            <div className="absolute bottom-4 left-4 glass rounded-xl p-4 max-w-xs">
+              <h4 className="text-xs font-semibold text-midnight-400 uppercase tracking-wider mb-3">
+                Node Types ({graphStats?.total_nodes || data.nodes.length})
+              </h4>
+              <div className="grid grid-cols-2 gap-2">
+                {/* Get unique labels from actual data */}
+                {Array.from(new Set(data.nodes.map(n => n._label)))
+                  .filter(Boolean)
+                  .map((label) => (
+                    <div key={label} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: getNodeColor(label) }}
+                      />
+                      <span className="text-xs text-midnight-300 truncate">{label}</span>
+                    </div>
+                  ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Node Details Panel */}
@@ -234,7 +305,7 @@ export default function GraphVisualization() {
               <div>
                 <span
                   className="inline-block px-2 py-1 rounded text-xs font-medium"
-                  style={{ backgroundColor: nodeColors[selectedNode._label] + '20', color: nodeColors[selectedNode._label] }}
+                  style={{ backgroundColor: getNodeColor(selectedNode._label) + '20', color: getNodeColor(selectedNode._label) }}
                 >
                   {selectedNode._label}
                 </span>

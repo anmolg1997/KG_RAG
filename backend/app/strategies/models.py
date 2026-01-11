@@ -147,6 +147,52 @@ class EntityLinkingConfig(BaseModel):
     )
 
 
+class ValidationConfig(BaseModel):
+    """Configuration for schema validation behavior."""
+    
+    mode: Literal["strict", "warn", "store_valid", "ignore"] = Field(
+        default="warn",
+        description="""Validation mode:
+        - strict: Block storage if ANY validation errors
+        - warn: Log warnings/errors but store everything
+        - store_valid: Skip storing entities with errors, store valid ones
+        - ignore: No validation, store everything silently"""
+    )
+    log_level: Literal["debug", "info", "warning"] = Field(
+        default="info",
+        description="Log level for validation messages"
+    )
+    fail_on_missing_required: bool = Field(
+        default=False,
+        description="Treat missing required properties as errors (not just warnings)"
+    )
+    fail_on_broken_relationships: bool = Field(
+        default=True,
+        description="Treat relationships to non-existent entities as errors"
+    )
+
+
+class ChunkingConfig(BaseModel):
+    """Configuration for text chunking."""
+    
+    strategy: Literal["fixed", "semantic", "sentence"] = Field(
+        default="fixed",
+        description="Chunking strategy: fixed=by char count, semantic=by sections, sentence=by sentences"
+    )
+    chunk_size: int = Field(
+        default=1000,
+        ge=100,
+        le=10000,
+        description="Target chunk size in characters"
+    )
+    chunk_overlap: int = Field(
+        default=200,
+        ge=0,
+        le=500,
+        description="Overlap between chunks in characters"
+    )
+
+
 class ExtractionStrategy(BaseModel):
     """
     Complete extraction strategy configuration.
@@ -164,6 +210,10 @@ class ExtractionStrategy(BaseModel):
         description="Human-readable description"
     )
     
+    chunking: ChunkingConfig = Field(
+        default_factory=ChunkingConfig,
+        description="Text chunking settings"
+    )
     chunks: ChunkStorageConfig = Field(
         default_factory=ChunkStorageConfig,
         description="Chunk storage settings"
@@ -179,6 +229,10 @@ class ExtractionStrategy(BaseModel):
     entity_linking: EntityLinkingConfig = Field(
         default_factory=EntityLinkingConfig,
         description="Entity-chunk linking settings"
+    )
+    validation: ValidationConfig = Field(
+        default_factory=ValidationConfig,
+        description="Schema validation settings"
     )
 
 

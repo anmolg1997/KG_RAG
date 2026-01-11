@@ -243,6 +243,7 @@ class DynamicGraph(BaseModel):
     Complete extraction result with dynamic entities.
     
     This replaces the hardcoded ExtractedGraph and works with any schema.
+    Deduplicates entities by ID to provide accurate counts.
     """
     
     schema_name: str = Field(..., description="Schema used for extraction")
@@ -258,8 +259,28 @@ class DynamicGraph(BaseModel):
     # Metadata
     extraction_metadata: dict[str, Any] = Field(default_factory=dict)
     
+    # Track entity IDs to prevent duplicates
+    _entity_ids: set[str] = set()
+    
+    # Track raw extraction counts (before deduplication)
+    _raw_entity_count: int = 0
+    
+    model_config = {"arbitrary_types_allowed": True}
+    
     def add_entity(self, entity: DynamicEntity) -> None:
-        """Add an entity to the graph."""
+        """
+        Add an entity to the graph, deduplicating by ID.
+        
+        If an entity with the same ID exists, it's skipped (keeps first occurrence).
+        """
+        self._raw_entity_count += 1
+        
+        # Skip if we already have this entity
+        if entity.id in self._entity_ids:
+            return
+        
+        self._entity_ids.add(entity.id)
+        
         if entity.entity_type not in self.entities:
             self.entities[entity.entity_type] = []
         self.entities[entity.entity_type].append(entity)
@@ -289,8 +310,13 @@ class DynamicGraph(BaseModel):
     
     @property
     def entity_count(self) -> int:
-        """Total number of entities."""
+        """Total number of unique entities (after deduplication)."""
         return sum(len(entities) for entities in self.entities.values())
+    
+    @property
+    def raw_entity_count(self) -> int:
+        """Total entities extracted before deduplication."""
+        return self._raw_entity_count
     
     @property
     def relationship_count(self) -> int:

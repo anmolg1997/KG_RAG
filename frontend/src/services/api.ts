@@ -10,6 +10,38 @@ const api = axios.create({
 });
 
 // Types
+export interface CypherQueryInfo {
+  description: string;
+  query: string;
+  params: Record<string, unknown>;
+  result_count: number;
+  execution_time_ms: number;
+}
+
+export interface DebugInfo {
+  query_analysis?: {
+    intent?: string;
+    entity_types?: string[];
+    keywords?: string[];
+    has_temporal_aspect?: boolean;
+    search_text?: string;
+  };
+  cypher_queries: CypherQueryInfo[];
+  retrieval_results: {
+    entities: Array<Record<string, unknown>>;
+    chunks: Array<{
+      id: string;
+      text: string;
+      page_number?: number;
+      section_heading?: string;
+      key_terms?: string[];
+    }>;
+    entity_count: number;
+    chunk_count: number;
+  };
+  search_methods_used: string[];
+}
+
 export interface QueryResponse {
   question: string;
   answer: string;
@@ -22,6 +54,7 @@ export interface QueryResponse {
     total_time_ms: number;
     entities_retrieved: number;
   };
+  debug_info?: DebugInfo;
 }
 
 export interface Source {
@@ -29,13 +62,32 @@ export interface Source {
   type: string;
   title?: string;
   name?: string;
-  clause_type?: string;
+  [key: string]: unknown; // Schema-agnostic: allow any properties
 }
 
 export interface GraphStats {
   total_nodes: number;
   total_relationships: number;
   node_counts: Record<string, number>;
+  schema_name?: string;
+  
+  // New structured format
+  entities?: {
+    total: number;
+    by_type: Record<string, number>;
+  };
+  entity_relationships?: {
+    total: number;
+    by_type: Record<string, number>;
+  };
+  infrastructure?: {
+    documents: number;
+    chunks: number;
+    relationships: {
+      total: number;
+      by_type: Record<string, number>;
+    };
+  };
 }
 
 export interface GraphVisualization {
@@ -63,20 +115,26 @@ export interface UploadResponse {
   filename: string;
   message: string;
   status: string;
+  schema_used?: string;
+  entities_extracted: number;
+  relationships_extracted: number;
+  chunks_created: number;
+  pages_parsed: number;
 }
 
-export interface Contract {
+// Schema-agnostic entity - any entity type from any schema
+export interface Entity {
   id: string;
-  title: string;
-  contract_type?: string;
-  effective_date?: string;
-  expiration_date?: string;
-  status: string;
-  summary?: string;
+  _label?: string;
+  name?: string;
+  title?: string;
+  [key: string]: unknown;
 }
 
+// Schema-agnostic extraction result
 export interface ExtractionResult {
   success: boolean;
+  schema_name: string;
   entity_count: number;
   relationship_count: number;
   validation: {
@@ -84,31 +142,51 @@ export interface ExtractionResult {
     errors: string[];
     warnings: string[];
   };
-  entities: {
-    contracts: unknown[];
-    parties: unknown[];
-    clauses: unknown[];
-    obligations: unknown[];
-    dates: unknown[];
-    amounts: unknown[];
-    relationships: unknown[];
-  };
+  // Dynamic entities grouped by type (keys come from schema)
+  entities: Record<string, Entity[]>;
+  relationships: Array<{
+    id: string;
+    type: string;
+    source_id: string;
+    target_id: string;
+    [key: string]: unknown;
+  }>;
+}
+
+// Schema definition from backend
+export interface SchemaInfo {
+  name: string;
+  version: string;
+  description: string;
+  entity_types: string[];
+  relationship_types: string[];
+}
+
+export interface EntityDefinition {
+  name: string;
+  description: string;
+  properties: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+  }>;
 }
 
 // API functions
 export const queryAPI = {
-  ask: async (question: string, contractId?: string): Promise<QueryResponse> => {
+  ask: async (question: string, documentId?: string): Promise<QueryResponse> => {
     const response = await api.post('/query/ask', {
       question,
-      contract_id: contractId,
+      document_id: documentId,  // Schema-agnostic: use document_id
       include_follow_ups: true,
       use_history: true,
     });
     return response.data;
   },
 
-  summarize: async (contractId: string) => {
-    const response = await api.post('/query/summarize', { contract_id: contractId });
+  summarize: async (documentId: string) => {
+    const response = await api.post('/query/summarize', { document_id: documentId });
     return response.data;
   },
 
@@ -167,42 +245,33 @@ export const graphAPI = {
     return response.data;
   },
 
-  listContracts: async () => {
-    const response = await api.get('/graph/contracts');
-    return response.data;
-  },
-
-  getContract: async (contractId: string) => {
-    const response = await api.get(`/graph/contracts/${contractId}`);
-    return response.data;
-  },
-
-  getContractFull: async (contractId: string) => {
-    const response = await api.get(`/graph/contracts/${contractId}/full`);
-    return response.data;
-  },
-
-  listClauses: async (clauseType?: string) => {
-    const response = await api.get('/graph/clauses', {
-      params: clauseType ? { clause_type: clauseType } : {},
+  // Schema-agnostic entity operations
+  listEntities: async (entityType: string, limit = 100) => {
+    const response = await api.get(`/graph/entities/${entityType}`, {
+      params: { limit },
     });
     return response.data;
   },
 
-  listParties: async () => {
-    const response = await api.get('/graph/parties');
+  getEntity: async (entityType: string, entityId: string) => {
+    const response = await api.get(`/graph/entities/${entityType}/${entityId}`);
     return response.data;
   },
 
-  searchParties: async (name: string) => {
-    const response = await api.get('/graph/parties/search', {
-      params: { name },
+  getEntityWithRelated: async (entityType: string, entityId: string) => {
+    const response = await api.get(`/graph/entities/${entityType}/${entityId}/related`);
+    return response.data;
+  },
+
+  searchEntities: async (query: string, entityType?: string, limit = 50) => {
+    const response = await api.get('/graph/search', {
+      params: { query, entity_type: entityType, limit },
     });
     return response.data;
   },
 
-  deleteContract: async (contractId: string) => {
-    const response = await api.delete(`/graph/contracts/${contractId}`);
+  deleteEntity: async (entityType: string, entityId: string) => {
+    const response = await api.delete(`/graph/entities/${entityType}/${entityId}`);
     return response.data;
   },
 
@@ -211,13 +280,36 @@ export const graphAPI = {
     return response.data;
   },
 
-  getSchema: async () => {
+  // Schema information
+  getSchema: async (): Promise<{
+    active_schema: string;
+    schema_version: string;
+    schema_description: string;
+    defined_entities: string[];
+    defined_relationships: string[];
+    database_labels: string[];
+    database_relationships: string[];
+  }> => {
     const response = await api.get('/graph/schema');
+    return response.data;
+  },
+
+  getSchemaEntities: async (): Promise<{
+    schema_name: string;
+    entities: EntityDefinition[];
+  }> => {
+    const response = await api.get('/graph/schema/entities');
+    return response.data;
+  },
+
+  getSchemaRelationships: async () => {
+    const response = await api.get('/graph/schema/relationships');
     return response.data;
   },
 };
 
 export const extractionAPI = {
+  // Extract entities from text using active schema
   extract: async (text: string, entityTypes?: string[]): Promise<ExtractionResult> => {
     const response = await api.post('/extraction/extract', {
       text,
@@ -226,19 +318,15 @@ export const extractionAPI = {
     return response.data;
   },
 
-  getOntology: async () => {
-    const response = await api.get('/extraction/ontology');
-    return response.data;
+  // Get available entity types from the active schema
+  getEntityTypes: async (): Promise<string[]> => {
+    const schema = await graphAPI.getSchema();
+    return schema.defined_entities;
   },
 
-  getClauseTypes: async () => {
-    const response = await api.get('/extraction/clause-types');
-    return response.data;
-  },
-
-  getPartyTypes: async () => {
-    const response = await api.get('/extraction/party-types');
-    return response.data;
+  // Get schema definition for extraction guidance
+  getSchemaInfo: async () => {
+    return graphAPI.getSchemaEntities();
   },
 };
 
@@ -322,6 +410,10 @@ export interface StrategyStatus {
       key_terms: boolean;
     };
     entity_linking: boolean;
+    validation: {
+      mode: 'ignore' | 'warn' | 'store_valid' | 'strict';
+      log_level: string;
+    };
   };
   retrieval: {
     name: string;

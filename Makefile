@@ -309,7 +309,7 @@ strategy-presets: ## List available strategy presets
 strategy-load: ## Load a strategy preset (usage: make strategy-load PRESET=comprehensive)
 	@if [ -z "$(PRESET)" ]; then \
 		echo "$(RED)Usage: make strategy-load PRESET=<name>$(NC)"; \
-		echo "Available: minimal, balanced, comprehensive, speed, research"; \
+		echo "Available: minimal, balanced, comprehensive, speed, research, strict"; \
 	else \
 		echo "$(BLUE)Loading preset: $(PRESET)$(NC)"; \
 		curl -s -X POST http://localhost:$(BACKEND_PORT)/strategies/preset \
@@ -327,15 +327,53 @@ strategy-reset: ## Reset strategies to defaults
 # =============================================================================
 
 db-clear: ## Clear all data from Neo4j (DANGEROUS!)
-	@echo "$(YELLOW)WARNING: This will delete ALL data in Neo4j!$(NC)"
-	@read -p "Are you sure? [y/N] " confirm && \
-		[ "$$confirm" = "y" ] && \
-		curl -X DELETE http://localhost:$(BACKEND_PORT)/graph/all || \
-		echo "Cancelled"
+	@response=$$(curl -s -w "\n%{http_code}" http://localhost:$(BACKEND_PORT)/graph/stats 2>/dev/null); \
+	http_code=$$(echo "$$response" | tail -n1); \
+	body=$$(echo "$$response" | sed '$$d'); \
+	if [ -z "$$http_code" ] || [ "$$http_code" = "000" ]; then \
+		echo "$(RED)Could not connect to backend (is it running on port $(BACKEND_PORT)?)$(NC)"; \
+		exit 1; \
+	elif [ "$$http_code" != "200" ]; then \
+		echo "$(RED)Error fetching stats (HTTP $$http_code)$(NC)"; \
+		exit 1; \
+	fi; \
+	total=$$(echo "$$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_nodes',0))" 2>/dev/null || echo "0"); \
+	rels=$$(echo "$$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_relationships',0))" 2>/dev/null || echo "0"); \
+	if [ "$$total" = "0" ] && [ "$$rels" = "0" ]; then \
+		echo "$(GREEN)Database is already empty (0 nodes, 0 relationships)$(NC)"; \
+	else \
+		echo "$(YELLOW)Current database contents:$(NC)"; \
+		echo "  Nodes: $$total"; \
+		echo "  Relationships: $$rels"; \
+		echo ""; \
+		echo "$(RED)WARNING: This will delete ALL data!$(NC)"; \
+		read -p "Are you sure? [y/N] " confirm; \
+		if [ "$$confirm" = "y" ]; then \
+			curl -s -X DELETE http://localhost:$(BACKEND_PORT)/graph/all > /dev/null && \
+			echo "$(GREEN)Database cleared successfully$(NC)"; \
+		else \
+			echo "Cancelled"; \
+		fi; \
+	fi
 
 db-stats: ## Show database statistics
-	@curl -s http://localhost:$(BACKEND_PORT)/graph/stats | python -m json.tool 2>/dev/null || \
-		echo "$(RED)Could not fetch stats$(NC)"
+	@response=$$(curl -s -w "\n%{http_code}" http://localhost:$(BACKEND_PORT)/graph/stats 2>/dev/null); \
+	http_code=$$(echo "$$response" | tail -n1); \
+	body=$$(echo "$$response" | sed '$$d'); \
+	if [ "$$http_code" = "200" ]; then \
+		total=$$(echo "$$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_nodes',0))" 2>/dev/null || echo "0"); \
+		rels=$$(echo "$$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_relationships',0))" 2>/dev/null || echo "0"); \
+		if [ "$$total" = "0" ] && [ "$$rels" = "0" ]; then \
+			echo "$(YELLOW)Database is empty (0 nodes, 0 relationships)$(NC)"; \
+		else \
+			echo "$(GREEN)Database Statistics:$(NC)"; \
+			echo "$$body" | python3 -m json.tool; \
+		fi; \
+	elif [ -z "$$http_code" ] || [ "$$http_code" = "000" ]; then \
+		echo "$(RED)Could not connect to backend (is it running on port $(BACKEND_PORT)?)$(NC)"; \
+	else \
+		echo "$(RED)Error fetching stats (HTTP $$http_code)$(NC)"; \
+	fi
 
 # =============================================================================
 # STOP COMMANDS

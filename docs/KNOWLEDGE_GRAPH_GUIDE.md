@@ -311,12 +311,24 @@ Neo4j is a **graph database** - a database specifically designed to store and qu
 
 ### Accessing Neo4j
 
-After starting Neo4j with Docker, open: **http://localhost:7474**
+Neo4j exposes **two ports** for different purposes:
 
-Login:
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| **7474** | HTTP | Web-based Neo4j Browser UI for visual exploration |
+| **7687** | Bolt | Binary protocol for application connections (used by our backend) |
 
+**Ways to access your database:**
+
+1. **Local Browser**: http://localhost:7474  
+   The traditional Neo4j Browser UI running on your local Docker container.
+
+2. **Hosted Browser**: https://browser.neo4j.io/  
+   Neo4j's cloud-hosted browser interface. Connect to any Neo4j instance by entering your connection URL (`bolt://localhost:7687`). Useful when you can't access port 7474 directly.
+
+**Login credentials:**
 - Username: `neo4j`
-- Password: `password`
+- Password: `password` (or whatever you set in `NEO4J_AUTH`)
 
 ---
 

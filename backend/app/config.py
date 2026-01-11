@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_user: str = Field(default="neo4j")
     neo4j_password: str = Field(default="password")
+    neo4j_max_pool_size: int = Field(default=50, description="Max connection pool size")
 
     # =========================================================================
     # LLM CONFIGURATION (via LiteLLM)
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     rag_model: str = Field(default="gpt-4o-mini")
     rag_temperature: float = Field(default=0.7)
     rag_max_tokens: int = Field(default=2048)
+    rag_max_conversation_history: int = Field(default=10, description="Max conversation turns to keep")
 
     # =========================================================================
     # CHUNKING CONFIGURATION

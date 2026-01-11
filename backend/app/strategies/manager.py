@@ -203,6 +203,10 @@ class StrategyManager:
                     "key_terms": self._extraction_strategy.metadata.key_terms.enabled,
                 },
                 "entity_linking": self._extraction_strategy.entity_linking.enabled,
+                "validation": {
+                    "mode": self._extraction_strategy.validation.mode,
+                    "log_level": self._extraction_strategy.validation.log_level,
+                },
             },
             "retrieval": {
                 "name": self._retrieval_strategy.name,

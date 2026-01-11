@@ -13,14 +13,14 @@ from app.rag.retriever import RetrievalContext
 logger = logging.getLogger(__name__)
 
 
-# Response generation prompts
-RAG_SYSTEM_PROMPT = """You are an expert legal document analyst assistant. Your role is to answer questions about contracts and legal documents using the provided context.
+# Response generation prompts (schema-agnostic)
+RAG_SYSTEM_PROMPT = """You are an expert document analyst assistant. Your role is to answer questions about documents using the provided knowledge graph context.
 
 GUIDELINES:
 1. Base your answers ONLY on the provided context
 2. If the context doesn't contain enough information, say so clearly
 3. Quote specific text when relevant
-4. Be precise about which contracts, clauses, or parties you're referring to
+4. Be precise about which entities, relationships, or sections you're referring to
 5. Highlight any ambiguities or uncertainties
 6. Structure your response clearly with sections if needed
 
@@ -44,15 +44,15 @@ RAG_USER_PROMPT = """## Context from Knowledge Graph
 Based on the context above, provide a comprehensive answer to the user's question. If the context doesn't contain sufficient information, explain what's missing and suggest what additional information might be needed."""
 
 
-SUMMARIZATION_PROMPT = """Summarize the following contract information concisely:
+SUMMARIZATION_PROMPT = """Summarize the following document information concisely:
 
 {context}
 
 Provide:
-1. Key parties involved
-2. Main obligations and terms
-3. Important dates and amounts
-4. Notable clauses or provisions"""
+1. Key entities and their relationships
+2. Main topics and themes
+3. Important dates, amounts, or metadata
+4. Notable sections or findings"""
 
 
 class ResponseGenerator:
@@ -169,7 +169,7 @@ class ResponseGenerator:
         """
         Generate a comparison between multiple contexts.
         
-        Useful for comparing clauses across contracts.
+        Useful for comparing entities or sections across documents.
         """
         if not contexts:
             return {
@@ -184,7 +184,7 @@ class ResponseGenerator:
         
         combined_context = "\n\n---\n\n".join(comparison_parts)
         
-        prompt = f"""Compare the following contract information:
+        prompt = f"""Compare the following document information:
 
 {combined_context}
 
@@ -277,13 +277,13 @@ Provide a structured comparison highlighting:
         context: RetrievalContext,
     ) -> list[str]:
         """Generate suggested follow-up questions."""
-        prompt = f"""Based on this Q&A exchange about contracts:
+        prompt = f"""Based on this Q&A exchange about the document:
 
 Question: {question}
 
 Answer: {response}
 
-Generate 3 relevant follow-up questions that would help the user understand the contracts better. 
+Generate 3 relevant follow-up questions that would help the user understand the document better. 
 Return only the questions, one per line."""
         
         result = await self.llm.complete(

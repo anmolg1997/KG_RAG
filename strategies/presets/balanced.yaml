@@ -7,6 +7,12 @@ extraction:
   name: "balanced"
   description: "Balanced extraction - chunks with basic metadata"
   
+  # Chunking settings
+  chunking:
+    strategy: "fixed"  # Options: fixed, semantic, sentence
+    chunk_size: 1000
+    chunk_overlap: 200
+  
   chunks:
     enabled: true
     store_text: true
@@ -44,6 +50,13 @@ extraction:
     enabled: true
     store_source_text: false
     store_chunk_index: false
+  
+  # Validation settings
+  validation:
+    mode: "warn"  # Options: strict, warn, store_valid, ignore
+    log_level: "info"
+    fail_on_missing_required: false
+    fail_on_broken_relationships: true
 
 retrieval:
   name: "balanced"

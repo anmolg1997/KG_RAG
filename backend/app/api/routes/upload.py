@@ -38,6 +38,11 @@ class UploadResponse(BaseModel):
     message: str
     status: str
     schema_used: Optional[str] = None
+    # Extraction metrics
+    entities_extracted: int = 0
+    relationships_extracted: int = 0
+    chunks_created: int = 0
+    pages_parsed: int = 0
 
 
 class IngestionStatusResponse(BaseModel):
@@ -93,14 +98,20 @@ async def upload_document(
             )
             
             schema_name = result.graph.schema_name if result.graph else settings.active_schema
+            entity_count = result.graph.entity_count if result.graph else 0
+            rel_count = result.graph.relationship_count if result.graph else 0
             
             return UploadResponse(
                 success=result.success,
                 document_id=result.document_id,
                 filename=file.filename,
-                message=f"Document processed: {result.graph.entity_count if result.graph else 0} entities extracted",
+                message=f"Extracted {entity_count} entities, {rel_count} relationships",
                 status=result.status.status,
                 schema_used=schema_name,
+                entities_extracted=entity_count,
+                relationships_extracted=rel_count,
+                chunks_created=len(result.chunks) if result.chunks else 0,
+                pages_parsed=result.status.pages_parsed,
             )
         except Exception as e:
             logger.error(f"Upload processing failed: {e}")

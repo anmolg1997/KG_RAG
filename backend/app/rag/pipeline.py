@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
+from app.config import settings
 from app.rag.retriever import GraphRetriever, RetrievalContext
 from app.rag.generator import ResponseGenerator
 
@@ -35,6 +36,9 @@ class RAGResponse:
     follow_up_questions: list[str] = None
     context_preview: str = None
     
+    # Debug info - Cypher queries and raw results
+    debug_info: Optional[dict] = None
+    
     def to_dict(self) -> dict:
         return {
             "question": self.question,
@@ -48,6 +52,7 @@ class RAGResponse:
                 "entities_retrieved": self.entities_retrieved,
             },
             "follow_up_questions": self.follow_up_questions,
+            "debug_info": self.debug_info,
         }
 
 
@@ -87,12 +92,12 @@ class RAGPipeline:
         
         # Conversation history for context
         self._conversation_history: list[ConversationTurn] = []
-        self._max_history = 10
+        self._max_history = settings.rag_max_conversation_history
     
     async def query(
         self,
         question: str,
-        contract_id: Optional[str] = None,
+        document_id: Optional[str] = None,
         include_follow_ups: bool = True,
         use_conversation_history: bool = True,
     ) -> RAGResponse:
@@ -101,7 +106,7 @@ class RAGPipeline:
         
         Args:
             question: User's question
-            contract_id: Optional contract to focus on
+            document_id: Optional document to focus on
             include_follow_ups: Generate follow-up questions
             use_conversation_history: Consider conversation context
             
@@ -111,21 +116,54 @@ class RAGPipeline:
         import time
         start_time = time.time()
         
+        # ═══════════════════════════════════════════════════════════════
+        # QUERY/RAG FLOW
+        # ═══════════════════════════════════════════════════════════════
+        logger.info("")
+        logger.info("═" * 60)
+        logger.info(f"🔍 QUERY: {question[:60]}{'...' if len(question) > 60 else ''}")
+        logger.info("═" * 60)
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 1: Prepare query
+        # ─────────────────────────────────────────────────────────────
+        logger.info("")
+        logger.info("┌─ STEP 1: Prepare query")
+        
         # Augment question with conversation history if enabled
         if use_conversation_history and self._conversation_history:
             augmented_question = self._augment_with_history(question)
+            logger.info(f"│  History: {len(self._conversation_history)} previous turns included")
         else:
             augmented_question = question
+            logger.info("│  History: None (fresh query)")
         
-        # Step 1: Retrieve relevant context
+        logger.info("└─ ✓ Query prepared")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 2: Multi-signal retrieval
+        # ─────────────────────────────────────────────────────────────
+        logger.info("")
+        logger.info("┌─ STEP 2: Multi-signal retrieval")
+        
         retrieval_start = time.time()
         context = await self.retriever.retrieve(
             query=augmented_question,
-            contract_id=contract_id,
+            document_id=document_id,
         )
         retrieval_time = (time.time() - retrieval_start) * 1000
         
-        # Step 2: Generate response
+        logger.info(f"│  Methods used: {', '.join(context.search_methods_used) if context.search_methods_used else 'default'}")
+        logger.info(f"│  Entities: {context.entity_count} | Chunks: {context.chunk_count}")
+        logger.info(f"└─ ✓ Retrieval complete ({retrieval_time:.0f}ms)")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 3: Generate response (LLM)
+        # ─────────────────────────────────────────────────────────────
+        logger.info("")
+        logger.info("┌─ STEP 3: Generate response (LLM)")
+        logger.info(f"│  Context size: {len(context.raw_text)} chars")
+        
         generation_start = time.time()
         generation_result = await self.generator.generate(
             question=question,
@@ -134,20 +172,42 @@ class RAGPipeline:
         )
         generation_time = (time.time() - generation_start) * 1000
         
-        # Step 3: Generate follow-up questions if requested
+        confidence = generation_result.get("confidence", 0)
+        logger.info(f"│  Confidence: {confidence:.0%}")
+        logger.info(f"└─ ✓ Generation complete ({generation_time:.0f}ms)")
+        
+        # ─────────────────────────────────────────────────────────────
+        # STEP 4: Generate follow-ups (optional)
+        # ─────────────────────────────────────────────────────────────
         follow_ups = None
         if include_follow_ups and generation_result.get("has_context"):
+            logger.info("")
+            logger.info("┌─ STEP 4: Generate follow-up questions")
             try:
                 follow_ups = await self.generator.generate_follow_up_questions(
                     question=question,
                     response=generation_result["response"],
                     context=context,
                 )
+                logger.info(f"│  Generated: {len(follow_ups) if follow_ups else 0} follow-ups")
+                logger.info("└─ ✓ Follow-ups complete")
             except Exception as e:
-                logger.warning(f"Follow-up generation failed: {e}")
+                logger.warning(f"│  Follow-up generation failed: {e}")
+                logger.info("└─ ⚠ Skipped")
                 follow_ups = []
         
+        # ─────────────────────────────────────────────────────────────
+        # COMPLETE
+        # ─────────────────────────────────────────────────────────────
         total_time = (time.time() - start_time) * 1000
+        
+        logger.info("")
+        logger.info("═" * 60)
+        logger.info(f"✅ QUERY COMPLETE")
+        logger.info(f"   Answer length: {len(generation_result['response'])} chars")
+        logger.info(f"   Sources: {len(generation_result.get('sources', []))} | Time: {total_time:.0f}ms")
+        logger.info("═" * 60)
+        logger.info("")
         
         # Store in conversation history
         self._add_to_history(
@@ -167,13 +227,14 @@ class RAGPipeline:
             entities_retrieved=context.entity_count,
             follow_up_questions=follow_ups,
             context_preview=context.raw_text[:500] if context.raw_text else None,
+            debug_info=context.to_debug_dict(),
         )
     
     async def query_with_context(
         self,
         question: str,
         additional_context: str,
-        contract_id: Optional[str] = None,
+        document_id: Optional[str] = None,
     ) -> RAGResponse:
         """
         Query with additional user-provided context.
@@ -187,7 +248,7 @@ class RAGPipeline:
         retrieval_start = time.time()
         graph_context = await self.retriever.retrieve(
             query=question,
-            contract_id=contract_id,
+            document_id=document_id,
         )
         retrieval_time = (time.time() - retrieval_start) * 1000
         
@@ -221,62 +282,62 @@ class RAGPipeline:
             entities_retrieved=graph_context.entity_count,
         )
     
-    async def summarize_contract(
-        self, contract_id: str
+    async def summarize_document(
+        self, document_id: str
     ) -> dict[str, Any]:
-        """Generate a summary of a specific contract."""
+        """Generate a summary of a specific document."""
         context = await self.retriever.retrieve(
-            query="Provide a complete summary of this contract",
-            contract_id=contract_id,
+            query="Provide a complete summary of this document",
+            document_id=document_id,
         )
         
         if context.is_empty:
             return {
-                "summary": "Contract not found or has no extracted information.",
-                "contract_id": contract_id,
+                "summary": "Document not found or has no extracted information.",
+                "document_id": document_id,
             }
         
         summary = await self.generator.generate_summary(context)
         
         return {
             "summary": summary,
-            "contract_id": contract_id,
+            "document_id": document_id,
             "entities_count": context.entity_count,
         }
     
-    async def compare_contracts(
+    async def compare_documents(
         self,
-        contract_ids: list[str],
+        document_ids: list[str],
         aspect: str = "general",
     ) -> dict[str, Any]:
-        """Compare multiple contracts."""
+        """Compare multiple documents."""
         contexts = []
         labels = []
         
-        for cid in contract_ids:
+        for doc_id in document_ids:
             ctx = await self.retriever.retrieve(
                 query=f"Get information about {aspect}",
-                contract_id=cid,
+                document_id=doc_id,
             )
             contexts.append(ctx)
             
-            # Get contract title for label
+            # Get document title for label
             for entity in ctx.entities:
-                if entity.get("title"):
-                    labels.append(entity["title"])
+                if entity.get("title") or entity.get("name"):
+                    labels.append(entity.get("title") or entity.get("name"))
                     break
             else:
-                labels.append(f"Contract {cid}")
+                labels.append(f"Document {doc_id}")
         
         comparison = await self.generator.generate_comparison(
-            question=f"Compare these contracts focusing on {aspect}",
+            question=f"Compare these documents focusing on {aspect}",
             contexts=contexts,
             labels=labels,
         )
         
         return {
             "comparison": comparison["response"],
-            "contracts_compared": labels,
+            "documents_compared": labels,
             "aspect": aspect,
         }
     

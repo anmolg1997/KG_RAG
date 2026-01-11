@@ -37,10 +37,10 @@ class SchemaLoader:
     
     Usage:
         loader = SchemaLoader()
-        schema = loader.load_schema("contract")
+        schema = loader.load_schema("research_paper")  # or any schema name
         
-        # Get entity definition
-        party_def = schema.get_entity("Party")
+        # Get entity definition dynamically
+        entity_def = schema.get_entity("SomeEntityType")
         
         # Generate extraction prompt
         prompt = loader.generate_extraction_prompt(schema, document_text)

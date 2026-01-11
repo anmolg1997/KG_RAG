@@ -88,6 +88,28 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ onStrategyChange }) => {
     comprehensive: 'bg-purple-600 hover:bg-purple-500',
     speed: 'bg-green-600 hover:bg-green-500',
     research: 'bg-amber-600 hover:bg-amber-500',
+    strict: 'bg-red-600 hover:bg-red-500',
+  };
+
+  const validationModes = [
+    { value: 'ignore', label: 'Ignore', desc: 'No validation, store all' },
+    { value: 'warn', label: 'Warn', desc: 'Log issues, store all' },
+    { value: 'store_valid', label: 'Valid Only', desc: 'Skip invalid, store valid' },
+    { value: 'strict', label: 'Strict', desc: 'Block if any errors' },
+  ];
+
+  const handleValidationModeChange = async (mode: string) => {
+    try {
+      setUpdating(true);
+      await strategyAPI.updateExtraction({ validation: { mode } });
+      await fetchData();
+      onStrategyChange?.();
+    } catch (err) {
+      console.error('Failed to update validation mode:', err);
+      setError('Failed to update validation mode');
+    } finally {
+      setUpdating(false);
+    }
   };
 
   if (loading) {
@@ -227,6 +249,31 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ onStrategyChange }) => {
                 onChange={(v) => handleToggle('extraction', ['entity_linking', 'enabled'], v)}
                 disabled={updating}
               />
+              
+              {/* Validation Mode */}
+              <div className="mt-3 pt-3 border-t border-slate-600">
+                <p className="text-xs text-slate-400 mb-2">Validation Mode</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {validationModes.map((mode) => (
+                    <button
+                      key={mode.value}
+                      onClick={() => handleValidationModeChange(mode.value)}
+                      disabled={updating}
+                      className={`px-2 py-1 text-xs rounded transition-colors disabled:opacity-50 ${
+                        status.extraction.validation?.mode === mode.value
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                      title={mode.desc}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {validationModes.find(m => m.value === status.extraction.validation?.mode)?.desc || 'Log issues, store all'}
+                </p>
+              </div>
             </div>
           </div>
 

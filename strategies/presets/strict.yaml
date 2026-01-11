@@ -1,16 +1,16 @@
-# Comprehensive Strategy Preset
-# All features enabled for deep document analysis
-# Use case: Complex documents like legal contracts, research papers,
-# or technical specifications requiring full context preservation.
+# Strict Strategy Preset
+# High data quality focus - only store fully validated entities
+# Use case: When data quality is paramount. Good for compliance
+# or regulated data where invalid entries must be blocked.
 
 extraction:
-  name: "comprehensive"
-  description: "Comprehensive extraction - all metadata enabled"
+  name: "strict"
+  description: "Strict extraction - only validated entities stored"
   
   # Chunking settings
   chunking:
     strategy: "fixed"
-    chunk_size: 800  # Smaller chunks for better precision
+    chunk_size: 800
     chunk_overlap: 200
   
   chunks:
@@ -34,38 +34,38 @@ extraction:
       enabled: true
       extract_dates: true
       extract_durations: true
-      extract_relative: true
+      extract_relative: false
     
     key_terms:
       enabled: true
-      method: "simple"  # Change to "llm" for better results
-      max_terms: 15
+      method: "simple"
+      max_terms: 10
     
     statistics:
       word_count: true
       char_count: true
-      sentence_count: true
+      sentence_count: false
   
   entity_linking:
     enabled: true
-    store_source_text: true
+    store_source_text: false
     store_chunk_index: true
   
-  # Validation - store only valid entities
+  # Validation - STRICT mode blocks storage on any error
   validation:
-    mode: "store_valid"  # Only store entities passing validation
+    mode: "strict"  # Block if ANY errors
     log_level: "info"
-    fail_on_missing_required: true  # Strict: require all required props
+    fail_on_missing_required: true
     fail_on_broken_relationships: true
 
 retrieval:
-  name: "comprehensive"
-  description: "Comprehensive retrieval - all search methods"
+  name: "strict"
+  description: "Strict retrieval - high confidence matches only"
   
   search:
     graph_traversal:
       enabled: true
-      max_depth: 3
+      max_depth: 2
     
     chunk_text_search:
       enabled: true
@@ -73,7 +73,7 @@ retrieval:
     
     keyword_matching:
       enabled: true
-      match_threshold: 0.4
+      match_threshold: 0.6  # Higher threshold
     
     temporal_filtering:
       enabled: true
@@ -82,21 +82,21 @@ retrieval:
   context:
     expand_neighbors:
       enabled: true
-      before: 2
-      after: 2
+      before: 1
+      after: 1
     
     include_metadata:
       section_heading: true
       page_number: true
       temporal_refs: true
-      key_terms: true
+      key_terms: false
   
   scoring:
-    entity_confidence_min: 0.4
+    entity_confidence_min: 0.7  # High confidence threshold
     graph_match_weight: 1.5
-    text_match_weight: 1.2
+    text_match_weight: 1.0
   
   limits:
-    max_chunks: 15
-    max_entities: 30
-    max_context_tokens: 6000
+    max_chunks: 10
+    max_entities: 20
+    max_context_tokens: 4000

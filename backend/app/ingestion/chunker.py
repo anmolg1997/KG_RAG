@@ -126,6 +126,8 @@ class TextChunker:
         parsed_doc: "ParsedDocument",
         extraction_strategy: Optional["ExtractionStrategy"] = None,
         document_id: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
     ) -> list[TextChunk]:
         """
         Chunk a parsed document with full metadata support.
@@ -138,17 +140,46 @@ class TextChunker:
             parsed_doc: Parsed document from PDFParser
             extraction_strategy: Extraction strategy configuration
             document_id: Optional document identifier
+            chunk_size: Override chunk size (or use strategy/default)
+            chunk_overlap: Override chunk overlap (or use strategy/default)
             
         Returns:
             List of TextChunk objects with rich metadata
         """
         doc_id = document_id or parsed_doc.filename
         
-        # Get base chunks
-        chunks = self.chunk_text(
-            parsed_doc.full_text,
-            metadata={"document_id": doc_id},
-        )
+        # Determine chunking parameters from strategy or overrides
+        effective_chunk_size = chunk_size
+        effective_chunk_overlap = chunk_overlap
+        
+        if extraction_strategy and extraction_strategy.chunking:
+            if effective_chunk_size is None:
+                effective_chunk_size = extraction_strategy.chunking.chunk_size
+            if effective_chunk_overlap is None:
+                effective_chunk_overlap = extraction_strategy.chunking.chunk_overlap
+        
+        # Fall back to instance defaults
+        if effective_chunk_size is None:
+            effective_chunk_size = self.chunk_size
+        if effective_chunk_overlap is None:
+            effective_chunk_overlap = self.chunk_overlap
+        
+        # Temporarily override instance settings for this call
+        original_chunk_size = self.chunk_size
+        original_chunk_overlap = self.chunk_overlap
+        self.chunk_size = effective_chunk_size
+        self.chunk_overlap = effective_chunk_overlap
+        
+        try:
+            # Get base chunks with the determined parameters
+            chunks = self.chunk_text(
+                parsed_doc.full_text,
+                metadata={"document_id": doc_id},
+            )
+        finally:
+            # Restore original settings
+            self.chunk_size = original_chunk_size
+            self.chunk_overlap = original_chunk_overlap
         
         # Enrich chunks with metadata based on strategy
         for chunk in chunks:

@@ -10,8 +10,13 @@ This guide explains all available `make` commands for the KG-RAG project.
 |---------|-------------|
 | `make help` | Show all available commands |
 | `make setup` | Complete project setup |
-| `make dev` | Start development servers |
+| `make dev` | Start all development servers |
 | `make health` | Check all service health |
+| `make strategy` | Show current strategy config |
+| `make strategy-load PRESET=X` | Load a preset (balanced, strict, etc.) |
+| `make db-stats` | Show database statistics |
+| `make db-clear` | Clear all data (with confirmation) |
+| `make stop-servers` | Stop backend and frontend |
 
 ---
 
@@ -72,12 +77,24 @@ make frontend
 
 ## Neo4j Commands
 
+### Neo4j Ports
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| **7474** | HTTP | Web Browser UI for visual exploration |
+| **7687** | Bolt | Application connection protocol |
+
+**Access your database:**
+- Local Browser: http://localhost:7474
+- Hosted Browser: https://browser.neo4j.io/ (connect to `bolt://localhost:7687`)
+
 ### `make neo4j`
 Start Neo4j database:
 ```bash
 make neo4j
 # Starts or creates Neo4j container
-# Access: http://localhost:7474
+# Browser UI: http://localhost:7474
+# Bolt connection: bolt://localhost:7687
 ```
 
 ### `make neo4j-stop`
@@ -195,6 +212,47 @@ make validate-schema
 
 ---
 
+## Strategy Commands
+
+### `make strategy`
+Show current extraction & retrieval strategies:
+```bash
+make strategy
+# Displays current strategy configuration
+```
+
+### `make strategy-presets`
+List available strategy presets:
+```bash
+make strategy-presets
+# Shows: minimal, balanced, comprehensive, speed, research, strict
+```
+
+### `make strategy-load`
+Load a specific strategy preset:
+```bash
+make strategy-load PRESET=comprehensive
+# Available: minimal, balanced, comprehensive, speed, research, strict
+```
+
+### `make strategy-reset`
+Reset strategies to defaults (balanced):
+```bash
+make strategy-reset
+```
+
+**Preset Summary:**
+| Preset | Validation Mode | Best For |
+|--------|-----------------|----------|
+| minimal | ignore | Quick testing |
+| balanced | warn | General use (default) |
+| comprehensive | store_valid | Deep analysis |
+| speed | ignore | High-volume |
+| research | warn | Academic papers |
+| strict | strict | Compliance |
+
+---
+
 ## Database Commands
 
 ### `make db-stats`
@@ -202,13 +260,15 @@ Show database statistics:
 ```bash
 make db-stats
 # Shows node counts, relationship counts
+# Distinguishes between empty database and connection errors
 ```
 
 ### `make db-clear`
-Clear all data (dangerous!):
+Clear all data (with confirmation):
 ```bash
 make db-clear
-# Prompts for confirmation before deleting
+# First shows current stats, then prompts for confirmation
+# Skips prompt if database is already empty
 ```
 
 ---

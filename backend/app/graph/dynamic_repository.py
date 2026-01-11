@@ -76,43 +76,52 @@ class DynamicGraphRepository:
         await self._create_indexes()
     
     async def _create_indexes(self) -> None:
-        """Create indexes for all entity types in schema and chunks."""
-        # Index for Chunk nodes
-        chunk_indexes = [
-            "CREATE INDEX chunk_id IF NOT EXISTS FOR (n:Chunk) ON (n.id)",
-            "CREATE INDEX chunk_document IF NOT EXISTS FOR (n:Chunk) ON (n.document_id)",
-            "CREATE INDEX chunk_index IF NOT EXISTS FOR (n:Chunk) ON (n.chunk_index)",
+        """
+        Create indexes for all entity types in schema and infrastructure nodes.
+        
+        Uses enterprise-level approach: checks existing indexes first,
+        then only creates what's missing. No noisy "already exists" logs.
+        """
+        # Build list of all required indexes: (index_name, label, property)
+        indexes_to_ensure: list[tuple[str, str, str]] = [
+            # Infrastructure: Chunk indexes
+            ("chunk_id", "Chunk", "id"),
+            ("chunk_document", "Chunk", "document_id"),
+            ("chunk_index", "Chunk", "chunk_index"),
+            # Infrastructure: Document indexes
+            ("document_id", "Document", "id"),
+            ("document_filename", "Document", "filename"),
         ]
         
-        # Index for Document nodes
-        doc_indexes = [
-            "CREATE INDEX document_id IF NOT EXISTS FOR (n:Document) ON (n.id)",
-            "CREATE INDEX document_filename IF NOT EXISTS FOR (n:Document) ON (n.filename)",
-        ]
-        
-        for query in chunk_indexes + doc_indexes:
-            try:
-                await self.client.execute_write(query)
-            except Exception as e:
-                logger.debug(f"Index creation note: {e}")
-        
-        # Index for schema entities
+        # Schema entity indexes
         for entity in self.schema.entities:
-            # Index on id
-            index_query = f"CREATE INDEX {entity.name.lower()}_id IF NOT EXISTS FOR (n:{entity.name}) ON (n.id)"
-            try:
-                await self.client.execute_write(index_query)
-            except Exception as e:
-                logger.debug(f"Index creation note: {e}")
+            # Primary index on id
+            indexes_to_ensure.append((
+                f"{entity.name.lower()}_id",
+                entity.name,
+                "id"
+            ))
             
-            # Index on common searchable properties
+            # Indexes on common searchable properties
             for prop in entity.properties:
                 if prop.name in ["name", "title"]:
-                    prop_index = f"CREATE INDEX {entity.name.lower()}_{prop.name} IF NOT EXISTS FOR (n:{entity.name}) ON (n.{prop.name})"
-                    try:
-                        await self.client.execute_write(prop_index)
-                    except Exception:
-                        pass
+                    indexes_to_ensure.append((
+                        f"{entity.name.lower()}_{prop.name}",
+                        entity.name,
+                        prop.name
+                    ))
+        
+        # Use batch operation for efficiency
+        result = await self.client.ensure_indexes_batch(indexes_to_ensure)
+        
+        # Log summary (not individual operations)
+        if result["created"] > 0:
+            logger.info(f"Indexes: {result['created']} created, {result['existed']} already existed")
+        elif result["existed"] > 0:
+            logger.debug(f"All {result['existed']} indexes already exist")
+        
+        if result["failed"] > 0:
+            logger.warning(f"Index creation failures: {result['failed']}")
     
     # =========================================================================
     # DOCUMENT OPERATIONS
@@ -380,7 +389,8 @@ class DynamicGraphRepository:
         search_text: str,
         document_id: Optional[str] = None,
         limit: int = 10,
-    ) -> list[dict[str, Any]]:
+        return_query: bool = False,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Search chunks by text content.
         
@@ -388,10 +398,13 @@ class DynamicGraphRepository:
             search_text: Text to search for
             document_id: Optional document to limit search
             limit: Maximum results
+            return_query: If True, return (results, query_info) tuple
             
         Returns:
-            List of matching chunks
+            List of matching chunks, or (chunks, query_info) if return_query=True
         """
+        import time
+        
         if document_id:
             query = """
             MATCH (c:Chunk {document_id: $doc_id})
@@ -410,15 +423,28 @@ class DynamicGraphRepository:
             """
             params = {"search": search_text, "limit": limit}
         
+        start_time = time.time()
         results = await self.client.execute_query(query, params)
-        return [dict(r["c"]) for r in results]
+        exec_time = (time.time() - start_time) * 1000
+        
+        chunks = [dict(r["c"]) for r in results]
+        
+        if return_query:
+            query_info = {
+                "query": query.strip(),
+                "params": params,
+                "execution_time_ms": exec_time,
+            }
+            return chunks, query_info
+        return chunks
     
     async def search_chunks_by_key_terms(
         self,
         terms: list[str],
         document_id: Optional[str] = None,
         limit: int = 10,
-    ) -> list[dict[str, Any]]:
+        return_query: bool = False,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Search chunks by key terms.
         
@@ -426,10 +452,13 @@ class DynamicGraphRepository:
             terms: List of terms to match
             document_id: Optional document to limit search
             limit: Maximum results
+            return_query: If True, return (results, query_info) tuple
             
         Returns:
             List of matching chunks with match counts
         """
+        import time
+        
         # Convert terms to lowercase for matching
         terms_lower = [t.lower() for t in terms]
         
@@ -456,8 +485,20 @@ class DynamicGraphRepository:
             """
             params = {"terms": terms_lower, "limit": limit}
         
+        start_time = time.time()
         results = await self.client.execute_query(query, params)
-        return [{"chunk": dict(r["c"]), "match_count": r["match_count"]} for r in results]
+        exec_time = (time.time() - start_time) * 1000
+        
+        matches = [{"chunk": dict(r["c"]), "match_count": r["match_count"]} for r in results]
+        
+        if return_query:
+            query_info = {
+                "query": query.strip(),
+                "params": params,
+                "execution_time_ms": exec_time,
+            }
+            return matches, query_info
+        return matches
     
     async def get_chunks_by_page(
         self,
@@ -481,17 +522,21 @@ class DynamicGraphRepository:
         self,
         document_id: Optional[str] = None,
         temporal_type: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
+        return_query: bool = False,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Get chunks that have temporal references.
         
         Args:
             document_id: Optional document to filter
             temporal_type: Optional type filter (date, duration, relative)
+            return_query: If True, return (results, query_info) tuple
             
         Returns:
             List of chunks with temporal_refs
         """
+        import time
+        
         conditions = ["c.temporal_refs IS NOT NULL"]
         params = {}
         
@@ -511,8 +556,20 @@ class DynamicGraphRepository:
         ORDER BY c.chunk_index
         """
         
+        start_time = time.time()
         results = await self.client.execute_query(query, params)
-        return [dict(r["c"]) for r in results]
+        exec_time = (time.time() - start_time) * 1000
+        
+        chunks = [dict(r["c"]) for r in results]
+        
+        if return_query:
+            query_info = {
+                "query": query.strip(),
+                "params": params,
+                "execution_time_ms": exec_time,
+            }
+            return chunks, query_info
+        return chunks
     
     async def get_source_chunk_for_entity(
         self,
@@ -758,21 +815,100 @@ class DynamicGraphRepository:
         return {"nodes": nodes, "edges": edges}
     
     async def get_stats(self) -> dict[str, Any]:
-        """Get graph statistics."""
-        query = """
+        """
+        Get graph statistics with clear breakdown.
+        
+        Returns:
+            - entity_nodes: Count of actual schema entities (Contract, Party, etc.)
+            - infrastructure_nodes: Count of Document + Chunk nodes
+            - entity_relationships: Schema-defined relationships between entities
+            - infrastructure_relationships: EXTRACTED_FROM, FROM_DOCUMENT, NEXT_CHUNK, etc.
+        """
+        # Get node counts by label
+        node_query = """
         MATCH (n)
         RETURN labels(n)[0] as label, count(*) as count
         """
-        results = await self.client.execute_query(query)
+        node_results = await self.client.execute_query(node_query)
+        node_counts: dict[str, int] = {}
+        for r in node_results:
+            label = r.get("label")
+            count = r.get("count", 0)
+            if label and isinstance(count, int):
+                node_counts[label] = count
         
-        stats = {r["label"]: r["count"] for r in results if r["label"]}
+        # Separate infrastructure nodes from entity nodes
+        infrastructure_labels = {"Document", "Chunk"}
+        entity_counts: dict[str, int] = {}
+        infrastructure_count = 0
         
-        # Get relationship count
-        rel_query = "MATCH ()-[r]->() RETURN count(r) as count"
+        for label, count in node_counts.items():
+            if label in infrastructure_labels:
+                infrastructure_count += count
+            else:
+                entity_counts[label] = count
+        
+        # Get relationship counts by type
+        rel_query = """
+        MATCH ()-[r]->()
+        RETURN type(r) as rel_type, count(r) as count
+        """
         rel_results = await self.client.execute_query(rel_query)
-        stats["_relationships"] = rel_results[0]["count"] if rel_results else 0
+        rel_counts: dict[str, int] = {}
+        for r in rel_results:
+            rel_type = r.get("rel_type")
+            count = r.get("count", 0)
+            if rel_type and isinstance(count, int):
+                rel_counts[rel_type] = count
         
-        return stats
+        # Separate infrastructure relationships from entity relationships
+        infrastructure_rel_types = {"EXTRACTED_FROM", "FROM_DOCUMENT", "NEXT_CHUNK", "PREV_CHUNK"}
+        entity_rel_count = 0
+        infrastructure_rel_count = 0
+        entity_rel_breakdown: dict[str, int] = {}
+        infrastructure_rel_breakdown: dict[str, int] = {}
+        
+        for rel_type, count in rel_counts.items():
+            if rel_type in infrastructure_rel_types:
+                infrastructure_rel_count += count
+                infrastructure_rel_breakdown[rel_type] = count
+            else:
+                entity_rel_count += count
+                entity_rel_breakdown[rel_type] = count
+        
+        total_entities = sum(entity_counts.values())
+        total_nodes = total_entities + infrastructure_count
+        total_relationships = entity_rel_count + infrastructure_rel_count
+        
+        return {
+            # Summary totals
+            "total_nodes": total_nodes,
+            "total_relationships": total_relationships,
+            
+            # Entity breakdown (what users care about)
+            "entities": {
+                "total": total_entities,
+                "by_type": entity_counts,
+            },
+            "entity_relationships": {
+                "total": entity_rel_count,
+                "by_type": entity_rel_breakdown,
+            },
+            
+            # Infrastructure breakdown (chunks, documents, links)
+            "infrastructure": {
+                "documents": node_counts.get("Document", 0),
+                "chunks": node_counts.get("Chunk", 0),
+                "relationships": {
+                    "total": infrastructure_rel_count,
+                    "by_type": infrastructure_rel_breakdown,
+                },
+            },
+            
+            # Legacy format for backward compatibility
+            "node_counts": node_counts,
+            "schema_name": self.schema.schema_info.name if self.schema else None,
+        }
     
     async def delete_document_graph(self, source_document: str) -> dict[str, int]:
         """Delete all entities and chunks from a specific document."""

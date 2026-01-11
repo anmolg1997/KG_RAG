@@ -98,11 +98,12 @@ async def load_preset(request: PresetRequest):
     Replaces both extraction and retrieval strategies with the preset values.
     
     Available presets:
-    - minimal: Entities only, no chunks
-    - balanced: Good mix of features (default)
-    - comprehensive: All features enabled
-    - speed: Optimized for fast processing
-    - research: Optimized for academic papers
+    - minimal: Entities only, no chunks (validation: ignore)
+    - balanced: Good mix of features, default (validation: warn)
+    - comprehensive: All features enabled (validation: store_valid)
+    - speed: Optimized for fast processing (validation: ignore)
+    - research: Optimized for academic papers (validation: warn)
+    - strict: Only store validated entities (validation: strict)
     """
     manager = get_strategy_manager()
     try:

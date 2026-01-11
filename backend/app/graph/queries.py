@@ -268,93 +268,123 @@ class QueryBuilder:
 
 
 # =============================================================================
-# Pre-built Query Templates
+# Schema-Agnostic Query Templates
 # =============================================================================
 
 class QueryTemplates:
-    """Common query templates for contract analysis."""
+    """
+    Schema-agnostic query templates for common graph operations.
+    
+    These templates work with any schema by accepting entity types
+    and relationship types as parameters.
+    """
     
     @staticmethod
-    def find_contracts_by_party(party_name: str) -> QueryPlan:
-        """Find all contracts involving a party."""
-        return (QueryBuilder()
-            .match("Party", "p", {"name": party_name})
-            .with_related("Contract", "HAS_PARTY", "c", "p", "incoming")
-            .return_fields("c", "p")
-            .build())
-    
-    @staticmethod
-    def find_clauses_by_type(clause_type: str) -> QueryPlan:
-        """Find all clauses of a specific type."""
-        return (QueryBuilder()
-            .match("Clause", "c")
-            .where("c.clause_type", "equals", clause_type)
-            .return_fields("c")
-            .build())
-    
-    @staticmethod
-    def find_party_obligations(party_name: str) -> QueryPlan:
-        """Find all obligations for a party."""
-        return (QueryBuilder()
-            .match("Party", "p")
-            .where("p.name", "contains", party_name)
-            .with_related("Obligation", "OBLIGATES", "o", "p", "incoming")
-            .return_fields("p", "o")
-            .build())
-    
-    @staticmethod
-    def contract_summary(contract_id: str) -> QueryPlan:
-        """Get full contract summary with all related entities."""
+    def find_entities_by_relationship(
+        source_label: str,
+        source_property: str,
+        source_value: str,
+        target_label: str,
+        relationship_type: str,
+        direction: str = "incoming",
+    ) -> QueryPlan:
+        """Find entities connected via a relationship."""
         builder = QueryBuilder()
-        builder.match("Contract", "c", {"id": contract_id})
-        
-        # This is a complex query, build it manually
+        builder.match(source_label, "source", {source_property: source_value})
+        builder.with_related(target_label, relationship_type, "target", "source", direction)
+        builder.return_fields("source", "target")
+        return builder.build()
+    
+    @staticmethod
+    def find_entities_by_property(
+        label: str,
+        property_name: str,
+        property_value: str,
+        operator: str = "equals",
+    ) -> QueryPlan:
+        """Find all entities matching a property condition."""
+        return (QueryBuilder()
+            .match(label, "n")
+            .where(f"n.{property_name}", operator, property_value)
+            .return_fields("n")
+            .build())
+    
+    @staticmethod
+    def find_related_entities(
+        label: str,
+        property_name: str,
+        property_value: str,
+        relationship_type: str,
+        related_label: str,
+        direction: str = "outgoing",
+    ) -> QueryPlan:
+        """Find entities and their related entities."""
+        return (QueryBuilder()
+            .match(label, "source")
+            .where(f"source.{property_name}", "contains", property_value)
+            .with_related(related_label, relationship_type, "related", "source", direction)
+            .return_fields("source", "related")
+            .build())
+    
+    @staticmethod
+    def document_summary(document_id: str) -> QueryPlan:
+        """Get full document summary with all related entities (schema-agnostic)."""
         cypher = """
-        MATCH (c:Contract {id: $contract_id})
-        OPTIONAL MATCH (c)-[:HAS_PARTY]->(p:Party)
-        OPTIONAL MATCH (c)-[:HAS_CLAUSE]->(cl:Clause)
-        OPTIONAL MATCH (c)-[:HAS_DATE]->(d:ContractDate)
-        OPTIONAL MATCH (cl)-[:CREATES_OBLIGATION]->(o:Obligation)
-        OPTIONAL MATCH (cl)-[:REFERENCES_AMOUNT]->(a:Amount)
-        RETURN c,
-               collect(DISTINCT p) as parties,
-               collect(DISTINCT cl) as clauses,
-               collect(DISTINCT d) as dates,
-               collect(DISTINCT o) as obligations,
-               collect(DISTINCT a) as amounts
+        MATCH (d:Document {id: $document_id})
+        OPTIONAL MATCH (d)<-[:FROM_DOCUMENT]-(c:Chunk)
+        OPTIONAL MATCH (c)<-[:EXTRACTED_FROM]-(e)
+        WHERE NOT e:Chunk AND NOT e:Document
+        WITH d, collect(DISTINCT c) as chunks, collect(DISTINCT e) as entities
+        RETURN d as document,
+               size(chunks) as chunk_count,
+               size(entities) as entity_count,
+               entities
         """
         return QueryPlan(
             cypher=cypher,
-            parameters={"contract_id": contract_id},
+            parameters={"document_id": document_id},
             intent=QueryIntent.TRAVERSE,
-            description="Full contract summary",
+            description="Full document summary",
         )
     
     @staticmethod
-    def find_termination_clauses() -> QueryPlan:
-        """Find all termination-related clauses."""
-        return (QueryBuilder()
-            .match("Clause", "c")
-            .where("c.clause_type", "equals", "termination")
-            .with_related("Contract", "HAS_CLAUSE", "contract", "c", "incoming")
-            .return_fields("c", "contract")
-            .build())
-    
-    @staticmethod
-    def payment_obligations() -> QueryPlan:
-        """Find all payment obligations with amounts."""
+    def entities_from_chunk(chunk_id: str) -> QueryPlan:
+        """Get all entities extracted from a specific chunk."""
         cypher = """
-        MATCH (o:Obligation {obligation_type: 'payment'})
-        OPTIONAL MATCH (o)<-[:CREATES_OBLIGATION]-(c:Clause)
-        OPTIONAL MATCH (c)-[:REFERENCES_AMOUNT]->(a:Amount)
-        OPTIONAL MATCH (o)-[:OBLIGATES]->(p:Party)
-        RETURN o, c, a, p
+        MATCH (c:Chunk {chunk_id: $chunk_id})
+        OPTIONAL MATCH (c)<-[:EXTRACTED_FROM]-(e)
+        WHERE NOT e:Chunk AND NOT e:Document
+        RETURN c as chunk, collect(e) as entities
         """
         return QueryPlan(
             cypher=cypher,
-            parameters={},
+            parameters={"chunk_id": chunk_id},
             intent=QueryIntent.TRAVERSE,
-            description="Payment obligations with amounts",
+            description="Entities from chunk",
+        )
+    
+    @staticmethod
+    def entity_neighborhood(
+        label: str,
+        entity_id: str,
+        depth: int = 1,
+    ) -> QueryPlan:
+        """Get entity and its neighborhood up to specified depth."""
+        cypher = f"""
+        MATCH (n:{label} {{id: $entity_id}})
+        CALL apoc.path.subgraphAll(n, {{
+            maxLevel: {depth},
+            relationshipFilter: null,
+            labelFilter: '-Chunk|-Document'
+        }})
+        YIELD nodes, relationships
+        RETURN nodes, relationships
+        """
+        return QueryPlan(
+            cypher=cypher,
+            parameters={"entity_id": entity_id},
+            intent=QueryIntent.TRAVERSE,
+            description=f"Entity neighborhood (depth {depth})",
         )
     
     @staticmethod
@@ -372,4 +402,31 @@ class QueryTemplates:
             parameters={},
             intent=QueryIntent.AGGREGATE,
             description="Graph statistics",
+        )
+    
+    @staticmethod
+    def search_entities_fulltext(
+        search_term: str,
+        labels: Optional[list[str]] = None,
+        limit: int = 20,
+    ) -> QueryPlan:
+        """Search entities across all properties."""
+        if labels:
+            label_filter = ":" + "|".join(labels)
+        else:
+            label_filter = ""
+        
+        cypher = f"""
+        MATCH (n{label_filter})
+        WHERE any(key in keys(n) WHERE 
+            toString(n[key]) CONTAINS $search_term
+        )
+        RETURN n, labels(n)[0] as type
+        LIMIT $limit
+        """
+        return QueryPlan(
+            cypher=cypher,
+            parameters={"search_term": search_term, "limit": limit},
+            intent=QueryIntent.FIND_ENTITY,
+            description="Fulltext entity search",
         )

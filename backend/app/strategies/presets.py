@@ -11,8 +11,10 @@ from .models import (
     CombinedStrategy,
     ChunkStorageConfig,
     ChunkLinkingConfig,
+    ChunkingConfig,
     MetadataExtractionConfig,
     EntityLinkingConfig,
+    ValidationConfig,
     PageNumberConfig,
     SectionHeadingConfig,
     TemporalReferenceConfig,
@@ -47,6 +49,11 @@ def _create_minimal_preset() -> CombinedStrategy:
         extraction=ExtractionStrategy(
             name="minimal",
             description="Minimal extraction - entities only, no chunk storage",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=1500,  # Larger chunks for speed
+                chunk_overlap=100,
+            ),
             chunks=ChunkStorageConfig(
                 enabled=False,
                 store_text=False,
@@ -69,6 +76,10 @@ def _create_minimal_preset() -> CombinedStrategy:
             entity_linking=EntityLinkingConfig(
                 enabled=False,
                 store_source_text=True,  # Store source text in entity since no chunks
+            ),
+            validation=ValidationConfig(
+                mode="ignore",  # Fastest, no validation
+                log_level="warning",
             ),
         ),
         retrieval=RetrievalStrategy(
@@ -114,6 +125,11 @@ def _create_balanced_preset() -> CombinedStrategy:
         extraction=ExtractionStrategy(
             name="balanced",
             description="Balanced extraction - chunks with basic metadata",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=1000,
+                chunk_overlap=200,
+            ),
             chunks=ChunkStorageConfig(
                 enabled=True,
                 store_text=True,
@@ -145,6 +161,10 @@ def _create_balanced_preset() -> CombinedStrategy:
             entity_linking=EntityLinkingConfig(
                 enabled=True,
                 store_source_text=False,
+            ),
+            validation=ValidationConfig(
+                mode="warn",  # Default: log issues but store everything
+                log_level="info",
             ),
         ),
         retrieval=RetrievalStrategy(
@@ -190,6 +210,11 @@ def _create_comprehensive_preset() -> CombinedStrategy:
         extraction=ExtractionStrategy(
             name="comprehensive",
             description="Comprehensive extraction - all metadata enabled",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=800,  # Smaller chunks for better precision
+                chunk_overlap=200,
+            ),
             chunks=ChunkStorageConfig(
                 enabled=True,
                 store_text=True,
@@ -223,6 +248,11 @@ def _create_comprehensive_preset() -> CombinedStrategy:
                 enabled=True,
                 store_source_text=True,
                 store_chunk_index=True,
+            ),
+            validation=ValidationConfig(
+                mode="store_valid",  # Only store entities that pass validation
+                log_level="info",
+                fail_on_missing_required=True,  # Stricter: require all required props
             ),
         ),
         retrieval=RetrievalStrategy(
@@ -268,6 +298,11 @@ def _create_speed_preset() -> CombinedStrategy:
         extraction=ExtractionStrategy(
             name="speed",
             description="Speed optimized - minimal metadata, fast processing",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=2000,  # Larger chunks for fewer LLM calls
+                chunk_overlap=100,
+            ),
             chunks=ChunkStorageConfig(
                 enabled=True,
                 store_text=True,
@@ -291,6 +326,10 @@ def _create_speed_preset() -> CombinedStrategy:
             entity_linking=EntityLinkingConfig(
                 enabled=True,
                 store_source_text=False,
+            ),
+            validation=ValidationConfig(
+                mode="ignore",  # Skip validation for speed
+                log_level="warning",
             ),
         ),
         retrieval=RetrievalStrategy(
@@ -336,6 +375,11 @@ def _create_research_preset() -> CombinedStrategy:
         extraction=ExtractionStrategy(
             name="research",
             description="Research optimized - key terms, citations, sections",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=1200,
+                chunk_overlap=200,
+            ),
             chunks=ChunkStorageConfig(
                 enabled=True,
                 store_text=True,
@@ -375,6 +419,10 @@ def _create_research_preset() -> CombinedStrategy:
                 enabled=True,
                 store_source_text=False,
             ),
+            validation=ValidationConfig(
+                mode="warn",  # Log issues but don't block - research docs can be messy
+                log_level="info",
+            ),
         ),
         retrieval=RetrievalStrategy(
             name="research",
@@ -408,6 +456,93 @@ def _create_research_preset() -> CombinedStrategy:
     )
 
 
+def _create_strict_preset() -> CombinedStrategy:
+    """
+    Strict preset - high data quality focus.
+    
+    Use case: When data quality is paramount, only store fully 
+    validated entities. Good for compliance or regulated data.
+    """
+    return CombinedStrategy(
+        extraction=ExtractionStrategy(
+            name="strict",
+            description="Strict extraction - only validated entities stored",
+            chunking=ChunkingConfig(
+                strategy="fixed",
+                chunk_size=800,
+                chunk_overlap=200,
+            ),
+            chunks=ChunkStorageConfig(
+                enabled=True,
+                store_text=True,
+            ),
+            chunk_linking=ChunkLinkingConfig(
+                sequential=True,
+                to_document=True,
+            ),
+            metadata=MetadataExtractionConfig(
+                page_numbers=PageNumberConfig(enabled=True),
+                section_headings=SectionHeadingConfig(enabled=True),
+                temporal_references=TemporalReferenceConfig(
+                    enabled=True,
+                    extract_dates=True,
+                    extract_durations=True,
+                    extract_relative=False,
+                ),
+                key_terms=KeyTermConfig(
+                    enabled=True,
+                    method="simple",
+                    max_terms=10,
+                ),
+                statistics=StatisticsConfig(
+                    word_count=True,
+                    char_count=True,
+                    sentence_count=False,
+                ),
+            ),
+            entity_linking=EntityLinkingConfig(
+                enabled=True,
+                store_source_text=False,
+            ),
+            validation=ValidationConfig(
+                mode="strict",  # Block if ANY errors
+                log_level="info",
+                fail_on_missing_required=True,
+                fail_on_broken_relationships=True,
+            ),
+        ),
+        retrieval=RetrievalStrategy(
+            name="strict",
+            description="Strict retrieval - high confidence matches only",
+            search=SearchConfig(
+                graph_traversal=GraphTraversalConfig(enabled=True, max_depth=2),
+                chunk_text_search=ChunkTextSearchConfig(enabled=True, method="contains"),
+                keyword_matching=KeywordMatchingConfig(enabled=True, match_threshold=0.6),
+                temporal_filtering=TemporalFilteringConfig(enabled=True, auto_detect=True),
+            ),
+            context=ContextConfig(
+                expand_neighbors=NeighborExpansionConfig(enabled=True, before=1, after=1),
+                include_metadata=IncludeMetadataConfig(
+                    section_heading=True,
+                    page_number=True,
+                    temporal_refs=True,
+                    key_terms=False,
+                ),
+            ),
+            scoring=ScoringConfig(
+                entity_confidence_min=0.7,  # High confidence threshold
+                graph_match_weight=1.5,
+                text_match_weight=1.0,
+            ),
+            limits=LimitsConfig(
+                max_chunks=10,
+                max_entities=20,
+                max_context_tokens=4000,
+            ),
+        ),
+    )
+
+
 # =============================================================================
 # PRESET REGISTRY
 # =============================================================================
@@ -419,6 +554,7 @@ PRESETS: dict[str, CombinedStrategy] = {
     "comprehensive": _create_comprehensive_preset(),
     "speed": _create_speed_preset(),
     "research": _create_research_preset(),
+    "strict": _create_strict_preset(),
 }
 
 
@@ -427,7 +563,7 @@ def get_preset(name: str) -> CombinedStrategy:
     Get a preset by name.
     
     Args:
-        name: Preset name (minimal, balanced, comprehensive, speed, research)
+        name: Preset name (minimal, balanced, comprehensive, speed, research, strict)
         
     Returns:
         CombinedStrategy with both extraction and retrieval strategies

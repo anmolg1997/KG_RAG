@@ -91,13 +91,14 @@ Control how queries are answered:
 
 ### Quick Presets
 
-| Preset | Best For |
-|--------|----------|
-| `minimal` | Quick testing, small documents |
-| `balanced` | General use (default) |
-| `comprehensive` | Legal/contract deep analysis |
-| `speed` | High-volume processing |
-| `research` | Academic papers |
+| Preset | Best For | Validation |
+|--------|----------|------------|
+| `minimal` | Quick testing, small documents | ignore |
+| `balanced` | General use (default) | warn |
+| `comprehensive` | Legal/contract deep analysis | store_valid |
+| `speed` | High-volume processing | ignore |
+| `research` | Academic papers | warn |
+| `strict` | Compliance, regulated data | strict |
 
 ```bash
 # API: Load a preset
@@ -222,7 +223,12 @@ npm run dev
 | Frontend | http://localhost:5173 | Web interface |
 | Backend API | http://localhost:8000 | REST API |
 | API Docs | http://localhost:8000/docs | Interactive docs |
-| Neo4j Browser | http://localhost:7474 | Database explorer |
+| Neo4j Browser | http://localhost:7474 | Local database explorer |
+| Neo4j Hosted Browser | https://browser.neo4j.io/ | Cloud-hosted browser (connect to `bolt://localhost:7687`) |
+
+> **Neo4j Ports Explained:**
+> - **Port 7474 (HTTP)**: Web-based Neo4j Browser UI for visual graph exploration
+> - **Port 7687 (Bolt)**: Binary protocol for application connections (used by our Python backend)
 
 ---
 
@@ -263,13 +269,14 @@ KG_RAG/
 
 ## 🔧 Configuration
 
-Create a `.env` file in the backend directory:
+Create a `.env` file in the project root (copy from `env.example`):
 
 ```bash
 # Database
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
+NEO4J_MAX_POOL_SIZE=50
 
 # LLM (pick one or more)
 DEFAULT_LLM_MODEL=gpt-4o-mini
@@ -277,13 +284,29 @@ OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
 # OLLAMA_BASE_URL=http://localhost:11434
 
+# Extraction settings
+EXTRACTION_MODEL=gpt-4o-mini
+EXTRACTION_TEMPERATURE=0.0
+EXTRACTION_MAX_TOKENS=4096
+
+# RAG settings
+RAG_MODEL=gpt-4o-mini
+RAG_TEMPERATURE=0.7
+RAG_MAX_TOKENS=2048
+RAG_MAX_CONVERSATION_HISTORY=10
+
 # Schema - change this to use different document types!
 ACTIVE_SCHEMA=contract
 
-# Processing
+# Strategy preset (minimal, balanced, comprehensive, speed, research, strict)
+DEFAULT_STRATEGY_PRESET=balanced
+
+# Chunking (can also be set per-strategy)
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 ```
+
+See `env.example` for all available options.
 
 ---
 
@@ -324,7 +347,7 @@ Content-Type: application/json
 
 {
     "question": "What are the payment terms?",
-    "contract_id": "optional-id"
+    "document_id": "optional-document-id"
 }
 ```
 
