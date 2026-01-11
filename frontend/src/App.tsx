@@ -15,6 +15,7 @@ import DocumentUpload from './components/DocumentUpload';
 import GraphVisualization from './components/GraphVisualization';
 import ExtractionPanel from './components/ExtractionPanel';
 import HealthStatus from './components/HealthStatus';
+import StrategyPanel from './components/StrategyPanel';
 
 const tabs = [
   { id: 'chat', name: 'Query', icon: ChatBubbleLeftRightIcon },
@@ -96,6 +97,11 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Strategy Panel */}
+            <div className="p-4 border-t border-midnight-800/50">
+              <StrategyPanel />
+            </div>
 
             {/* Health Status */}
             <div className="p-4 border-t border-midnight-800/50">

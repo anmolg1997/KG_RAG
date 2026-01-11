@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.core.neo4j_client import get_neo4j_client
+from app.core.llm import get_llm_client
 from app.schema.loader import get_schema_loader
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ async def health_check():
     
     Checks:
     - Neo4j database connectivity
+    - LLM API connectivity (API key validation)
     - Schema loader status
     - Overall system health
     
@@ -70,6 +72,12 @@ async def health_check():
     services["neo4j"] = neo4j_health
     if neo4j_health.status != "healthy":
         overall_status = "degraded" if neo4j_health.status == "degraded" else "unhealthy"
+    
+    # Check LLM
+    llm_health = await _check_llm()
+    services["llm"] = llm_health
+    if llm_health.status != "healthy":
+        overall_status = "degraded" if llm_health.status == "degraded" else "unhealthy"
     
     # Check Schema Loader
     schema_health = _check_schema()
@@ -117,6 +125,13 @@ async def readiness_check():
         checks["neo4j"] = neo4j_ready
     except Exception:
         checks["neo4j"] = False
+    
+    # LLM must be reachable
+    try:
+        llm_health = await _check_llm()
+        checks["llm"] = llm_health.status == "healthy"
+    except Exception:
+        checks["llm"] = False
     
     # Schema must be loadable
     try:
@@ -167,6 +182,23 @@ async def neo4j_health():
     return {
         **health.model_dump(),
         **extra_info,
+    }
+
+
+@router.get("/llm")
+async def llm_health():
+    """
+    Detailed LLM health check.
+    
+    Verifies API key is valid by making a minimal API call.
+    """
+    health = await _check_llm()
+    
+    return {
+        **health.model_dump(),
+        "model": settings.default_llm_model,
+        "extraction_model": settings.extraction_model,
+        "rag_model": settings.rag_model,
     }
 
 
@@ -263,3 +295,75 @@ def _check_schema() -> ServiceHealth:
             status="degraded",
             message=str(e),
         )
+
+
+async def _check_llm() -> ServiceHealth:
+    """
+    Check LLM API health by making a minimal API call.
+    
+    This verifies:
+    - API key is configured
+    - API key is valid
+    - LLM service is reachable
+    """
+    import time
+    
+    # First check if any API key is configured
+    if not settings.openai_api_key and not settings.anthropic_api_key:
+        # Check if using Ollama (no key needed)
+        if not settings.default_llm_model.startswith("ollama/"):
+            return ServiceHealth(
+                name="llm",
+                status="unhealthy",
+                message="No API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)",
+            )
+    
+    try:
+        start = time.time()
+        client = get_llm_client()
+        
+        # Make a minimal API call to verify the key works
+        # Using a tiny prompt with low max_tokens to minimize cost
+        response = await client.complete(
+            prompt="Say 'ok'",
+            max_tokens=5,
+            temperature=0,
+        )
+        latency = (time.time() - start) * 1000
+        
+        if response and len(response) > 0:
+            return ServiceHealth(
+                name="llm",
+                status="healthy",
+                message=f"Model: {client.model}",
+                latency_ms=round(latency, 2),
+            )
+        else:
+            return ServiceHealth(
+                name="llm",
+                status="degraded",
+                message="Empty response from LLM",
+            )
+            
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Detect common API key errors
+        if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
+            return ServiceHealth(
+                name="llm",
+                status="unhealthy",
+                message="Invalid API key",
+            )
+        elif "rate" in error_msg.lower() and "limit" in error_msg.lower():
+            return ServiceHealth(
+                name="llm",
+                status="degraded",
+                message="Rate limited - but API key is valid",
+            )
+        else:
+            return ServiceHealth(
+                name="llm",
+                status="unhealthy",
+                message=f"LLM error: {error_msg[:100]}",
+            )

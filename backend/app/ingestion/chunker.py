@@ -5,26 +5,46 @@ Provides multiple chunking approaches:
 - Fixed-size chunking with overlap
 - Semantic chunking (paragraph/section aware)
 - Token-based chunking
+
+Now with enhanced metadata support for the strategy system.
 """
 
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+from uuid import uuid4
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.strategies.models import ExtractionStrategy
+    from app.ingestion.pdf_parser import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TextChunk:
-    """A chunk of text with metadata."""
+    """
+    A chunk of text with rich metadata.
     
-    text: str
-    chunk_index: int
-    start_char: int
-    end_char: int
+    Attributes:
+        id: Unique identifier for the chunk
+        text: The chunk text content
+        chunk_index: Sequential index of this chunk (0-based)
+        start_char: Start character position in original document
+        end_char: End character position in original document
+        document_id: ID of the source document
+        metadata: Additional metadata dictionary
+    """
+    
+    id: str = field(default_factory=lambda: str(uuid4()))
+    text: str = ""
+    chunk_index: int = 0
+    start_char: int = 0
+    end_char: int = 0
+    document_id: str = ""
     metadata: dict = field(default_factory=dict)
     
     @property
@@ -34,11 +54,35 @@ class TextChunk:
     @property
     def word_count(self) -> int:
         return len(self.text.split())
+    
+    @property
+    def page_number(self) -> Optional[int]:
+        """Get page number from metadata if available."""
+        return self.metadata.get("page_number")
+    
+    @property
+    def section_heading(self) -> Optional[str]:
+        """Get section heading from metadata if available."""
+        return self.metadata.get("section_heading")
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return {
+            "id": self.id,
+            "text": self.text,
+            "chunk_index": self.chunk_index,
+            "start_char": self.start_char,
+            "end_char": self.end_char,
+            "document_id": self.document_id,
+            "char_count": self.char_count,
+            "word_count": self.word_count,
+            **self.metadata,
+        }
 
 
 class TextChunker:
     """
-    Text chunking for document processing.
+    Text chunking for document processing with strategy support.
     
     Supports multiple strategies:
     - "fixed": Fixed character count with overlap
@@ -50,8 +94,10 @@ class TextChunker:
         chunker = TextChunker(chunk_size=1000, overlap=200)
         chunks = chunker.chunk_text(document_text)
         
-        for chunk in chunks:
-            print(f"Chunk {chunk.chunk_index}: {chunk.word_count} words")
+        # Or with strategy
+        from app.strategies import get_strategy_manager
+        strategy = get_strategy_manager().extraction
+        chunks = chunker.chunk_document(parsed_doc, strategy)
     """
     
     def __init__(
@@ -69,11 +115,66 @@ class TextChunker:
             r'(?<=[.!?])\s+(?=[A-Z])|(?<=\.)\s*\n'
         )
         
-        # Section header pattern (for contracts)
+        # Section header pattern (for contracts and legal docs)
         self.section_pattern = re.compile(
             r'^(?:ARTICLE|SECTION|Article|Section)\s+[IVXLCDM\d]+[.:)]?\s*',
             re.MULTILINE
         )
+    
+    def chunk_document(
+        self,
+        parsed_doc: "ParsedDocument",
+        extraction_strategy: Optional["ExtractionStrategy"] = None,
+        document_id: Optional[str] = None,
+    ) -> list[TextChunk]:
+        """
+        Chunk a parsed document with full metadata support.
+        
+        This is the main entry point when using the strategy system.
+        It automatically extracts page numbers and other metadata
+        based on the extraction strategy.
+        
+        Args:
+            parsed_doc: Parsed document from PDFParser
+            extraction_strategy: Extraction strategy configuration
+            document_id: Optional document identifier
+            
+        Returns:
+            List of TextChunk objects with rich metadata
+        """
+        doc_id = document_id or parsed_doc.filename
+        
+        # Get base chunks
+        chunks = self.chunk_text(
+            parsed_doc.full_text,
+            metadata={"document_id": doc_id},
+        )
+        
+        # Enrich chunks with metadata based on strategy
+        for chunk in chunks:
+            chunk.document_id = doc_id
+            
+            # Add page number if strategy enables it
+            if extraction_strategy is None or extraction_strategy.metadata.page_numbers.enabled:
+                page_start, page_end = parsed_doc.get_page_range_for_text_span(
+                    chunk.start_char, chunk.end_char
+                )
+                chunk.metadata["page_number"] = page_start
+                chunk.metadata["page_end"] = page_end
+                if page_start != page_end:
+                    chunk.metadata["spans_pages"] = True
+            
+            # Add statistics if strategy enables it
+            if extraction_strategy is None or extraction_strategy.metadata.statistics.word_count:
+                chunk.metadata["word_count"] = chunk.word_count
+            
+            if extraction_strategy is None or extraction_strategy.metadata.statistics.char_count:
+                chunk.metadata["char_count"] = chunk.char_count
+            
+            if extraction_strategy and extraction_strategy.metadata.statistics.sentence_count:
+                chunk.metadata["sentence_count"] = self._count_sentences(chunk.text)
+        
+        return chunks
     
     def chunk_text(
         self,
@@ -290,7 +391,7 @@ class TextChunker:
         self, text: str, metadata: dict
     ) -> list[TextChunk]:
         """
-        Smart semantic chunking for contracts.
+        Smart semantic chunking for contracts and structured documents.
         
         Tries to:
         1. Keep sections together
@@ -347,12 +448,17 @@ class TextChunker:
         
         return chunks
     
+    def _count_sentences(self, text: str) -> int:
+        """Count sentences in text."""
+        # Simple sentence count based on common terminators
+        terminators = re.findall(r'[.!?]+', text)
+        return len(terminators)
+    
     def estimate_tokens(self, text: str) -> int:
         """
         Estimate token count for text.
         
-        Uses rough heuristic: ~4 characters per token for English.
-        For accurate counting, use tiktoken.
+        Uses heuristic: ~4 characters per token for English.
         """
         return len(text) // 4
     
@@ -364,56 +470,29 @@ class TextChunker:
         metadata: Optional[dict] = None,
     ) -> list[TextChunk]:
         """
-        Chunk text by token count.
+        Chunk text by estimated token count.
         
-        Requires tiktoken for accurate token counting.
+        Uses character-based chunking with ~4 chars per token estimation.
         """
-        try:
-            import tiktoken
-            encoder = tiktoken.get_encoding("cl100k_base")
-        except ImportError:
-            logger.warning("tiktoken not available, using character-based chunking")
-            # Fall back to character-based with estimated sizes
-            char_size = max_tokens * 4
-            char_overlap = overlap_tokens * 4
-            original_size = self.chunk_size
-            original_overlap = self.chunk_overlap
-            self.chunk_size = char_size
-            self.chunk_overlap = char_overlap
-            result = self._chunk_fixed(text, metadata or {})
-            self.chunk_size = original_size
-            self.chunk_overlap = original_overlap
-            return result
+        # Convert tokens to characters (~4 chars per token)
+        char_size = max_tokens * 4
+        char_overlap = overlap_tokens * 4
         
-        metadata = metadata or {}
-        tokens = encoder.encode(text)
+        # Temporarily override chunk settings
+        original_size = self.chunk_size
+        original_overlap = self.chunk_overlap
+        self.chunk_size = char_size
+        self.chunk_overlap = char_overlap
         
-        chunks = []
-        start = 0
-        chunk_index = 0
+        # Use fixed chunking with estimated sizes
+        result = self._chunk_fixed(text, metadata or {})
         
-        while start < len(tokens):
-            end = min(start + max_tokens, len(tokens))
-            
-            chunk_tokens = tokens[start:end]
-            chunk_text = encoder.decode(chunk_tokens)
-            
-            # Find character positions
-            char_start = len(encoder.decode(tokens[:start]))
-            char_end = char_start + len(chunk_text)
-            
-            chunks.append(TextChunk(
-                text=chunk_text,
-                chunk_index=chunk_index,
-                start_char=char_start,
-                end_char=char_end,
-                metadata={**metadata, "token_count": len(chunk_tokens)},
-            ))
-            
-            chunk_index += 1
-            start = end - overlap_tokens
-            
-            if start <= 0:
-                start = end
+        # Add estimated token counts to metadata
+        for chunk in result:
+            chunk.metadata["estimated_tokens"] = self.estimate_tokens(chunk.text)
         
-        return chunks
+        # Restore original settings
+        self.chunk_size = original_size
+        self.chunk_overlap = original_overlap
+        
+        return result

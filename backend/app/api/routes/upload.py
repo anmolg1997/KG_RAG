@@ -24,8 +24,8 @@ def get_pipeline() -> IngestionPipeline:
     """Get or create the ingestion pipeline."""
     global _pipeline
     if _pipeline is None:
-        from app.graph.repository import GraphRepository
-        repo = GraphRepository()
+        from app.graph.dynamic_repository import DynamicGraphRepository
+        repo = DynamicGraphRepository()
         _pipeline = IngestionPipeline(graph_repo=repo)
     return _pipeline
 
@@ -37,6 +37,7 @@ class UploadResponse(BaseModel):
     filename: str
     message: str
     status: str
+    schema_used: Optional[str] = None
 
 
 class IngestionStatusResponse(BaseModel):
@@ -59,7 +60,7 @@ async def upload_document(
     
     The document will be:
     1. Parsed to extract text
-    2. Processed through entity extraction
+    2. Processed through entity extraction (using active schema)
     3. Stored in the knowledge graph
     
     Set process_immediately=False to just upload without processing.
@@ -91,12 +92,15 @@ async def upload_document(
                 store_in_graph=True,
             )
             
+            schema_name = result.graph.schema_name if result.graph else settings.active_schema
+            
             return UploadResponse(
                 success=result.success,
                 document_id=result.document_id,
                 filename=file.filename,
                 message=f"Document processed: {result.graph.entity_count if result.graph else 0} entities extracted",
                 status=result.status.status,
+                schema_used=schema_name,
             )
         except Exception as e:
             logger.error(f"Upload processing failed: {e}")
@@ -113,6 +117,7 @@ async def upload_document(
             filename=file.filename,
             message="Document uploaded, processing queued",
             status="pending",
+            schema_used=settings.active_schema,
         )
 
 
@@ -147,6 +152,7 @@ async def upload_text(
         return {
             "success": result.success,
             "document_id": result.document_id,
+            "schema_used": result.graph.schema_name if result.graph else settings.active_schema,
             "entities_extracted": result.graph.entity_count if result.graph else 0,
             "relationships_extracted": result.graph.relationship_count if result.graph else 0,
         }
@@ -237,6 +243,7 @@ async def process_local_file(file_path: str):
             "success": result.success,
             "document_id": result.document_id,
             "filename": path.name,
+            "schema_used": result.graph.schema_name if result.graph else settings.active_schema,
             "metrics": result.to_dict().get("metrics", {}),
         }
     except Exception as e:

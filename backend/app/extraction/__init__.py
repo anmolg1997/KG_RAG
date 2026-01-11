@@ -1,21 +1,9 @@
-"""Entity and relationship extraction from documents."""
+"""Schema-agnostic entity, relationship, and metadata extraction from documents."""
 
-from .ontology import (
-    Contract,
-    Party,
-    Clause,
-    Obligation,
-    ExtractedGraph,
-)
-from .extractor import EntityExtractor
-from .validator import ExtractionValidator
+from .dynamic_extractor import DynamicExtractor, ExtractionResult, ChunkMetadata
 
 __all__ = [
-    "Contract",
-    "Party",
-    "Clause",
-    "Obligation",
-    "ExtractedGraph",
-    "EntityExtractor",
-    "ExtractionValidator",
+    "DynamicExtractor",
+    "ExtractionResult",
+    "ChunkMetadata",
 ]

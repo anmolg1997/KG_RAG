@@ -5,6 +5,7 @@ Supports OpenAI, Anthropic, Ollama, and other providers.
 
 import json
 import logging
+import re
 from typing import Any, Optional, Type, TypeVar
 
 import litellm
@@ -20,6 +21,107 @@ from tenacity import (
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class APIKeyMaskingFilter(logging.Filter):
+    """
+    Logging filter that masks API keys and other sensitive data.
+    
+    Patterns masked:
+    - OpenAI keys: sk-proj-..., sk-...
+    - Anthropic keys: sk-ant-...
+    - Bearer tokens
+    - Generic API keys
+    """
+    
+    # Patterns for various API key formats
+    PATTERNS = [
+        # OpenAI API keys (sk-proj-..., sk-...)
+        (r'(sk-proj-[a-zA-Z0-9]{20})[a-zA-Z0-9_-]+', r'\1***MASKED***'),
+        (r'(sk-[a-zA-Z0-9]{20})[a-zA-Z0-9_-]+', r'\1***MASKED***'),
+        # Anthropic API keys
+        (r'(sk-ant-[a-zA-Z0-9]{10})[a-zA-Z0-9_-]+', r'\1***MASKED***'),
+        # Bearer tokens in headers
+        (r"'Authorization': 'Bearer ([^']{10})[^']*'", r"'Authorization': 'Bearer \1***MASKED***'"),
+        # Generic API key patterns
+        (r'(api[_-]?key["\']?\s*[:=]\s*["\']?)([a-zA-Z0-9_-]{20})[a-zA-Z0-9_-]+', r'\1\2***MASKED***'),
+    ]
+    
+    def __init__(self):
+        super().__init__()
+        # Compile patterns for efficiency
+        self.compiled_patterns = [
+            (re.compile(pattern, re.IGNORECASE), replacement)
+            for pattern, replacement in self.PATTERNS
+        ]
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Apply masking to the log message."""
+        if record.msg:
+            record.msg = self._mask_sensitive_data(str(record.msg))
+        if record.args:
+            record.args = tuple(
+                self._mask_sensitive_data(str(arg)) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+    
+    def _mask_sensitive_data(self, text: str) -> str:
+        """Replace sensitive patterns in text with masked versions."""
+        for pattern, replacement in self.compiled_patterns:
+            text = pattern.sub(replacement, text)
+        return text
+
+
+def setup_secure_logging():
+    """Apply API key masking filter to all relevant loggers."""
+    masking_filter = APIKeyMaskingFilter()
+    
+    # Apply to root logger
+    logging.getLogger().addFilter(masking_filter)
+    
+    # Apply to LiteLLM loggers specifically
+    for logger_name in ['LiteLLM', 'litellm', 'openai', 'anthropic']:
+        log = logging.getLogger(logger_name)
+        log.addFilter(masking_filter)
+    
+    # Also apply masking filter to all existing handlers
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(masking_filter)
+
+
+class SecurePrintRedirector:
+    """
+    Redirects stdout/stderr through API key masking.
+    Used to catch LiteLLM's direct print() statements.
+    """
+    
+    def __init__(self, original_stream, masking_filter: APIKeyMaskingFilter):
+        self.original_stream = original_stream
+        self.masking_filter = masking_filter
+    
+    def write(self, text: str):
+        masked_text = self.masking_filter._mask_sensitive_data(text)
+        self.original_stream.write(masked_text)
+    
+    def flush(self):
+        self.original_stream.flush()
+    
+    def __getattr__(self, name):
+        return getattr(self.original_stream, name)
+
+
+def setup_secure_print():
+    """Redirect print statements through API key masking."""
+    import sys
+    masking_filter = APIKeyMaskingFilter()
+    sys.stdout = SecurePrintRedirector(sys.__stdout__, masking_filter)
+    sys.stderr = SecurePrintRedirector(sys.__stderr__, masking_filter)
+
+
+# Apply secure logging on module import
+setup_secure_logging()
+setup_secure_print()
 
 # Type variable for generic structured output
 T = TypeVar("T", bound=BaseModel)

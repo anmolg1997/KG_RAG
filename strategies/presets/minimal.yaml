@@ -1,0 +1,89 @@
+# Minimal Strategy Preset
+# Entities only, no chunk storage
+# Use case: Quick extraction, small documents, when you only need
+# structured entity data without full text context.
+
+extraction:
+  name: "minimal"
+  description: "Minimal extraction - entities only, no chunk storage"
+  
+  chunks:
+    enabled: false
+    store_text: false
+    max_text_length: 0
+  
+  chunk_linking:
+    sequential: false
+    to_document: false
+  
+  metadata:
+    page_numbers:
+      enabled: false
+    
+    section_headings:
+      enabled: false
+      patterns: []
+    
+    temporal_references:
+      enabled: false
+      extract_dates: false
+      extract_durations: false
+      extract_relative: false
+    
+    key_terms:
+      enabled: false
+      method: "simple"
+      max_terms: 5
+    
+    statistics:
+      word_count: false
+      char_count: false
+      sentence_count: false
+  
+  entity_linking:
+    enabled: false
+    store_source_text: true  # Store source in entity since no chunks
+    store_chunk_index: false
+
+retrieval:
+  name: "minimal"
+  description: "Minimal retrieval - graph only"
+  
+  search:
+    graph_traversal:
+      enabled: true
+      max_depth: 2
+    
+    chunk_text_search:
+      enabled: false
+      method: "contains"
+    
+    keyword_matching:
+      enabled: false
+      match_threshold: 0.5
+    
+    temporal_filtering:
+      enabled: false
+      auto_detect: false
+  
+  context:
+    expand_neighbors:
+      enabled: false
+      before: 0
+      after: 0
+    
+    include_metadata:
+      section_heading: false
+      page_number: false
+      temporal_refs: false
+      key_terms: false
+  
+  scoring:
+    entity_confidence_min: 0.3
+    graph_match_weight: 1.0
+    text_match_weight: 0.0
+  
+  limits:
+    max_chunks: 5
+    max_entities: 15
+    max_context_tokens: 2000

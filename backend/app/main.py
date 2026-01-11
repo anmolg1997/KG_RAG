@@ -20,6 +20,7 @@ from app.api.routes import (
     graph_router,
     extraction_router,
     health_router,
+    strategies_router,
 )
 
 # Configure logging
@@ -90,6 +91,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router)
+app.include_router(strategies_router)
 app.include_router(upload_router)
 app.include_router(query_router)
 app.include_router(graph_router)
@@ -106,6 +108,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "health": "/health",
+            "strategies": "/strategies",
             "upload": "/upload",
             "query": "/query",
             "graph": "/graph",

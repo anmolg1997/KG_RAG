@@ -5,6 +5,7 @@ from .query import router as query_router
 from .graph import router as graph_router
 from .extraction import router as extraction_router
 from .health import router as health_router
+from .strategies import router as strategies_router
 
 __all__ = [
     "upload_router",
@@ -12,4 +13,5 @@ __all__ = [
     "graph_router",
     "extraction_router",
     "health_router",
+    "strategies_router",
 ]

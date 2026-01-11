@@ -73,6 +73,43 @@ entities:
 
 ---
 
+## ⚡ Configurable Strategy System
+
+The system includes a **Strategy System** for fine-tuning extraction and retrieval behavior:
+
+### Extraction Strategies
+Control how documents are processed:
+- **Chunk Storage**: Store text chunks as graph nodes for source linking
+- **Metadata Extraction**: Page numbers, section headings, dates, key terms
+- **Entity-Chunk Linking**: Connect entities to their source text
+
+### Retrieval Strategies  
+Control how queries are answered:
+- **Multi-Signal Search**: Combine graph traversal + text search + keyword matching
+- **Context Expansion**: Automatically include neighboring chunks
+- **Temporal Filtering**: Find content by dates and deadlines
+
+### Quick Presets
+
+| Preset | Best For |
+|--------|----------|
+| `minimal` | Quick testing, small documents |
+| `balanced` | General use (default) |
+| `comprehensive` | Legal/contract deep analysis |
+| `speed` | High-volume processing |
+| `research` | Academic papers |
+
+```bash
+# API: Load a preset
+curl -X POST http://localhost:8000/strategies/preset \
+  -H "Content-Type: application/json" \
+  -d '{"name": "comprehensive"}'
+```
+
+Or use the **Strategy Panel** in the sidebar of the web UI.
+
+---
+
 ## 🏗️ System Architecture
 
 ```
@@ -298,11 +335,13 @@ GET /graph/stats
 
 ### Health Check
 ```bash
-GET /health           # Full health status
+GET /health           # Full health status (Neo4j + LLM + Schema)
 GET /health/ready     # Kubernetes readiness probe
 GET /health/live      # Kubernetes liveness probe
 GET /health/neo4j     # Neo4j specific health
+GET /health/llm       # LLM API health (validates API key with minimal call)
 GET /health/schemas   # Available schemas
+GET /health/config    # Non-sensitive configuration
 ```
 
 ### Extract from Text

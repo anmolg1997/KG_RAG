@@ -1,6 +1,6 @@
-"""Knowledge graph operations: CRUD, queries, algorithms."""
+"""Schema-agnostic knowledge graph operations: CRUD, queries, algorithms."""
 
-from .repository import GraphRepository
+from .dynamic_repository import DynamicGraphRepository
 from .queries import QueryBuilder
 
-__all__ = ["GraphRepository", "QueryBuilder"]
+__all__ = ["DynamicGraphRepository", "QueryBuilder"]

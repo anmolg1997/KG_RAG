@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     schemas_path: str = Field(default="schemas")
 
     # =========================================================================
+    # STRATEGY CONFIGURATION
+    # =========================================================================
+    default_strategy_preset: str = Field(
+        default="balanced",
+        description="Default strategy preset (minimal, balanced, comprehensive, speed, research)"
+    )
+
+    # =========================================================================
     # PATHS
     # =========================================================================
     docs_path: str = Field(default="docs")

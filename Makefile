@@ -10,7 +10,8 @@
 #   make test        - Run tests
 
 .PHONY: help setup backend-setup frontend-setup dev backend frontend neo4j \
-        docker-up docker-down clean test lint format health
+        docker-up docker-down clean test lint format health \
+        strategy strategy-presets strategy-load strategy-reset
 
 # Default target
 .DEFAULT_GOAL := help
@@ -74,6 +75,12 @@ help: ## Show this help message
 	@echo "  $(GREEN)make list-schemas$(NC)    List available schema files"
 	@echo "  $(GREEN)make validate-schema$(NC) Validate all schema files"
 	@echo ""
+	@echo "$(YELLOW)⚙️  STRATEGY MANAGEMENT$(NC)"
+	@echo "  $(GREEN)make strategy$(NC)        Show current extraction & retrieval strategies"
+	@echo "  $(GREEN)make strategy-presets$(NC) List available strategy presets"
+	@echo "  $(GREEN)make strategy-load$(NC)   Load preset (e.g., make strategy-load PRESET=comprehensive)"
+	@echo "  $(GREEN)make strategy-reset$(NC)  Reset strategies to defaults"
+	@echo ""
 	@echo "$(YELLOW)🧹 UTILITIES$(NC)"
 	@echo "  $(GREEN)make clean$(NC)           Remove build artifacts & caches"
 	@echo "  $(GREEN)make shell$(NC)           Open Python shell with app context"
@@ -100,9 +107,9 @@ setup: neo4j backend-setup frontend-setup ## Complete project setup
 	@echo "  1. Copy env.example to backend/.env and add your API keys"
 	@echo "  2. Run 'make dev' to start development servers"
 
-backend-setup: ## Setup backend with uv
-	@echo "$(BLUE)Setting up backend...$(NC)"
-	cd backend && uv venv
+backend-setup: ## Setup backend with uv (Python 3.12)
+	@echo "$(BLUE)Setting up backend with Python 3.12...$(NC)"
+	cd backend && uv venv --python 3.12
 	cd backend && uv pip install -r requirements.txt
 	@echo "$(GREEN)✓ Backend setup complete$(NC)"
 
@@ -266,6 +273,42 @@ for s in ['contract', 'research_paper']: \
         print(f'✓ {s}.yaml is valid'); \
     except Exception as e: \
         print(f'✗ {s}.yaml: {e}')"
+
+# =============================================================================
+# STRATEGY MANAGEMENT
+# =============================================================================
+
+strategy: ## Show current extraction & retrieval strategies
+	@echo "$(BLUE)Current Strategies:$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Extraction Strategy:$(NC)"
+	@curl -s http://localhost:8000/strategies/extraction | python -m json.tool 2>/dev/null || \
+		echo "$(RED)Backend not reachable$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Retrieval Strategy:$(NC)"
+	@curl -s http://localhost:8000/strategies/retrieval | python -m json.tool 2>/dev/null || \
+		echo "$(RED)Backend not reachable$(NC)"
+
+strategy-presets: ## List available strategy presets
+	@echo "$(BLUE)Available Strategy Presets:$(NC)"
+	@curl -s http://localhost:8000/strategies/presets | python -m json.tool 2>/dev/null || \
+		echo "$(RED)Backend not reachable$(NC)"
+
+strategy-load: ## Load a strategy preset (usage: make strategy-load PRESET=comprehensive)
+	@if [ -z "$(PRESET)" ]; then \
+		echo "$(RED)Usage: make strategy-load PRESET=<name>$(NC)"; \
+		echo "Available: minimal, balanced, comprehensive, speed, research"; \
+	else \
+		echo "$(BLUE)Loading preset: $(PRESET)$(NC)"; \
+		curl -s -X POST http://localhost:8000/strategies/preset \
+			-H "Content-Type: application/json" \
+			-d '{"name": "$(PRESET)"}' | python -m json.tool; \
+	fi
+
+strategy-reset: ## Reset strategies to defaults
+	@echo "$(BLUE)Resetting strategies to defaults...$(NC)"
+	@curl -s -X POST http://localhost:8000/strategies/reset | python -m json.tool 2>/dev/null || \
+		echo "$(RED)Backend not reachable$(NC)"
 
 # =============================================================================
 # DATABASE

@@ -6,7 +6,7 @@ from typing import AsyncGenerator
 
 from app.core.neo4j_client import Neo4jClient, get_neo4j_client
 from app.core.llm import LLMClient, get_llm_client
-from app.graph.repository import GraphRepository
+from app.graph.dynamic_repository import DynamicGraphRepository
 from app.rag.pipeline import RAGPipeline
 
 
@@ -25,9 +25,9 @@ async def get_llm() -> LLMClient:
     return get_llm_client()
 
 
-async def get_graph_repo() -> AsyncGenerator[GraphRepository, None]:
+async def get_graph_repo() -> AsyncGenerator[DynamicGraphRepository, None]:
     """Dependency for graph repository."""
-    repo = GraphRepository()
+    repo = DynamicGraphRepository()
     await repo.initialize()
     yield repo
 

@@ -1,0 +1,89 @@
+# Comprehensive Strategy Preset
+# All features enabled for deep document analysis
+# Use case: Complex documents like legal contracts, research papers,
+# or technical specifications requiring full context preservation.
+
+extraction:
+  name: "comprehensive"
+  description: "Comprehensive extraction - all metadata enabled"
+  
+  chunks:
+    enabled: true
+    store_text: true
+    max_text_length: 0  # No limit
+  
+  chunk_linking:
+    sequential: true
+    to_document: true
+  
+  metadata:
+    page_numbers:
+      enabled: true
+    
+    section_headings:
+      enabled: true
+      patterns: []  # Use defaults
+    
+    temporal_references:
+      enabled: true
+      extract_dates: true
+      extract_durations: true
+      extract_relative: true
+    
+    key_terms:
+      enabled: true
+      method: "simple"  # Change to "llm" for better results
+      max_terms: 15
+    
+    statistics:
+      word_count: true
+      char_count: true
+      sentence_count: true
+  
+  entity_linking:
+    enabled: true
+    store_source_text: true
+    store_chunk_index: true
+
+retrieval:
+  name: "comprehensive"
+  description: "Comprehensive retrieval - all search methods"
+  
+  search:
+    graph_traversal:
+      enabled: true
+      max_depth: 3
+    
+    chunk_text_search:
+      enabled: true
+      method: "contains"
+    
+    keyword_matching:
+      enabled: true
+      match_threshold: 0.4
+    
+    temporal_filtering:
+      enabled: true
+      auto_detect: true
+  
+  context:
+    expand_neighbors:
+      enabled: true
+      before: 2
+      after: 2
+    
+    include_metadata:
+      section_heading: true
+      page_number: true
+      temporal_refs: true
+      key_terms: true
+  
+  scoring:
+    entity_confidence_min: 0.4
+    graph_match_weight: 1.5
+    text_match_weight: 1.2
+  
+  limits:
+    max_chunks: 15
+    max_entities: 30
+    max_context_tokens: 6000

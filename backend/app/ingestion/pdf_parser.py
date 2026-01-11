@@ -4,7 +4,7 @@ PDF document parsing and text extraction.
 Supports:
 - Text extraction with layout preservation
 - Metadata extraction (title, author, dates)
-- Page-level processing
+- Page-level processing with character offset tracking
 - Table detection (basic)
 """
 
@@ -24,6 +24,8 @@ class PageContent:
     
     page_number: int
     text: str
+    start_char: int = 0  # Character offset where this page starts in full_text
+    end_char: int = 0    # Character offset where this page ends in full_text
     tables: list[str] = field(default_factory=list)
     images: int = 0  # Count of images
     
@@ -69,6 +71,16 @@ class ParsedDocument:
     pages: list[PageContent]
     full_text: str
     
+    # Page offset index for fast lookups
+    _page_offsets: list[tuple[int, int, int]] = field(default_factory=list)
+    
+    def __post_init__(self):
+        """Build page offset index after initialization."""
+        if not self._page_offsets and self.pages:
+            self._page_offsets = [
+                (p.page_number, p.start_char, p.end_char) for p in self.pages
+            ]
+    
     @property
     def total_words(self) -> int:
         return sum(p.word_count for p in self.pages)
@@ -76,6 +88,43 @@ class ParsedDocument:
     @property
     def total_characters(self) -> int:
         return len(self.full_text)
+    
+    def get_page_for_char_position(self, char_pos: int) -> int:
+        """
+        Get the page number for a given character position.
+        
+        Args:
+            char_pos: Character position in full_text
+            
+        Returns:
+            Page number (1-indexed)
+        """
+        for page_num, start, end in self._page_offsets:
+            if start <= char_pos < end:
+                return page_num
+        
+        # If position is beyond all pages, return last page
+        if self._page_offsets and char_pos >= self._page_offsets[-1][2]:
+            return self._page_offsets[-1][0]
+        
+        return 1  # Default to first page
+    
+    def get_page_range_for_text_span(
+        self, start_char: int, end_char: int
+    ) -> tuple[int, int]:
+        """
+        Get the page range for a text span.
+        
+        Args:
+            start_char: Start character position
+            end_char: End character position
+            
+        Returns:
+            Tuple of (start_page, end_page) - both 1-indexed
+        """
+        start_page = self.get_page_for_char_position(start_char)
+        end_page = self.get_page_for_char_position(end_char - 1)  # -1 to stay within span
+        return (start_page, end_page)
 
 
 class PDFParser:
@@ -86,12 +135,16 @@ class PDFParser:
     - Preserves document structure
     - Extracts metadata
     - Handles multi-column layouts
+    - Tracks page-level character offsets for chunk-to-page mapping
     - Detects tables (basic)
     
     Usage:
         parser = PDFParser()
         doc = parser.parse("contract.pdf")
         print(doc.full_text)
+        
+        # Get page number for a character position
+        page = doc.get_page_for_char_position(1500)
     """
     
     def __init__(
@@ -130,19 +183,28 @@ class PDFParser:
             # Extract metadata
             metadata = self._extract_metadata(doc, file_path)
             
-            # Extract pages
+            # Extract pages with character offset tracking
             pages = []
             all_text_parts = []
+            current_offset = 0
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 page_content = self._extract_page(page, page_num + 1)
+                
+                # Set character offsets
+                page_content.start_char = current_offset
+                page_content.end_char = current_offset + len(page_content.text)
+                
                 pages.append(page_content)
                 all_text_parts.append(page_content.text)
+                
+                # Update offset (+2 for the "\n\n" separator between pages)
+                current_offset = page_content.end_char + 2
             
             doc.close()
             
-            # Combine all text
+            # Combine all text with page separators
             full_text = "\n\n".join(all_text_parts)
             
             logger.info(
@@ -180,15 +242,24 @@ class PDFParser:
             metadata = self._extract_metadata_from_doc(doc)
             metadata.file_size = len(data)
             
-            # Extract pages
+            # Extract pages with character offset tracking
             pages = []
             all_text_parts = []
+            current_offset = 0
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 page_content = self._extract_page(page, page_num + 1)
+                
+                # Set character offsets
+                page_content.start_char = current_offset
+                page_content.end_char = current_offset + len(page_content.text)
+                
                 pages.append(page_content)
                 all_text_parts.append(page_content.text)
+                
+                # Update offset (+2 for the "\n\n" separator)
+                current_offset = page_content.end_char + 2
             
             doc.close()
             

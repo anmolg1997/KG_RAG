@@ -308,4 +308,94 @@ export const healthAPI = {
   },
 };
 
+// Strategy types
+export interface StrategyStatus {
+  current_preset: string | null;
+  extraction: {
+    name: string;
+    description: string;
+    chunks_enabled: boolean;
+    metadata_enabled: {
+      page_numbers: boolean;
+      section_headings: boolean;
+      temporal_references: boolean;
+      key_terms: boolean;
+    };
+    entity_linking: boolean;
+  };
+  retrieval: {
+    name: string;
+    description: string;
+    search_methods: {
+      graph_traversal: boolean;
+      chunk_text_search: boolean;
+      keyword_matching: boolean;
+      temporal_filtering: boolean;
+    };
+    context_expansion: boolean;
+  };
+}
+
+export interface PresetInfo {
+  name: string;
+  extraction_description: string;
+  retrieval_description: string;
+}
+
+export const strategyAPI = {
+  // Get current strategy status
+  getStatus: async (): Promise<StrategyStatus> => {
+    const response = await api.get('/strategies');
+    return response.data;
+  },
+
+  // Get available presets
+  getPresets: async (): Promise<PresetInfo[]> => {
+    const response = await api.get('/strategies/presets');
+    return response.data;
+  },
+
+  // Load a preset
+  loadPreset: async (presetName: string) => {
+    const response = await api.post('/strategies/preset', { name: presetName });
+    return response.data;
+  },
+
+  // Get extraction strategy details
+  getExtraction: async () => {
+    const response = await api.get('/strategies/extraction');
+    return response.data;
+  },
+
+  // Update extraction strategy
+  updateExtraction: async (updates: Record<string, unknown>) => {
+    const response = await api.patch('/strategies/extraction', { updates });
+    return response.data;
+  },
+
+  // Get retrieval strategy details
+  getRetrieval: async () => {
+    const response = await api.get('/strategies/retrieval');
+    return response.data;
+  },
+
+  // Update retrieval strategy
+  updateRetrieval: async (updates: Record<string, unknown>) => {
+    const response = await api.patch('/strategies/retrieval', { updates });
+    return response.data;
+  },
+
+  // Get combined strategy
+  getCombined: async () => {
+    const response = await api.get('/strategies/combined');
+    return response.data;
+  },
+
+  // Reset strategies to defaults
+  reset: async () => {
+    const response = await api.post('/strategies/reset');
+    return response.data;
+  },
+};
+
 export default api;

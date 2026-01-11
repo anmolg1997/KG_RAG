@@ -1,0 +1,89 @@
+# Balanced Strategy Preset
+# Good mix of features for general use
+# Use case: General purpose document processing with reasonable
+# metadata extraction and retrieval capabilities.
+
+extraction:
+  name: "balanced"
+  description: "Balanced extraction - chunks with basic metadata"
+  
+  chunks:
+    enabled: true
+    store_text: true
+    max_text_length: 0  # No limit
+  
+  chunk_linking:
+    sequential: true
+    to_document: true
+  
+  metadata:
+    page_numbers:
+      enabled: true
+    
+    section_headings:
+      enabled: true
+      patterns: []  # Use defaults
+    
+    temporal_references:
+      enabled: true
+      extract_dates: true
+      extract_durations: true
+      extract_relative: false
+    
+    key_terms:
+      enabled: true
+      method: "simple"  # Options: simple, llm
+      max_terms: 8
+    
+    statistics:
+      word_count: true
+      char_count: true
+      sentence_count: false
+  
+  entity_linking:
+    enabled: true
+    store_source_text: false
+    store_chunk_index: false
+
+retrieval:
+  name: "balanced"
+  description: "Balanced retrieval - graph + text search"
+  
+  search:
+    graph_traversal:
+      enabled: true
+      max_depth: 2
+    
+    chunk_text_search:
+      enabled: true
+      method: "contains"  # Options: contains, fulltext
+    
+    keyword_matching:
+      enabled: true
+      match_threshold: 0.5
+    
+    temporal_filtering:
+      enabled: true
+      auto_detect: true
+  
+  context:
+    expand_neighbors:
+      enabled: true
+      before: 1
+      after: 1
+    
+    include_metadata:
+      section_heading: true
+      page_number: true
+      temporal_refs: false
+      key_terms: false
+  
+  scoring:
+    entity_confidence_min: 0.5
+    graph_match_weight: 1.5
+    text_match_weight: 1.0
+  
+  limits:
+    max_chunks: 10
+    max_entities: 20
+    max_context_tokens: 4000

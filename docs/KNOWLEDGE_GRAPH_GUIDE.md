@@ -23,6 +23,7 @@ Welcome! This guide will teach you **what knowledge graphs are** and **how they 
 Imagine you're organizing information about a **contract**:
 
 **Traditional Database (Tables):**
+
 ```
 ┌─────────────────────────────────────────────┐
 │ Contracts Table                             │
@@ -43,6 +44,7 @@ Imagine you're organizing information about a **contract**:
 ```
 
 **Knowledge Graph (Nodes & Edges):**
+
 ```
                     ┌─────────────────┐
                     │    Contract     │
@@ -61,13 +63,13 @@ Imagine you're organizing information about a **contract**:
 
 ### The Key Difference
 
-| Aspect | Traditional DB | Knowledge Graph |
-|--------|---------------|-----------------|
-| **Structure** | Fixed tables with rows | Flexible nodes & edges |
-| **Relationships** | Foreign keys (indirect) | First-class citizens (direct) |
-| **Schema** | Rigid, predefined | Flexible, can evolve |
-| **Queries** | JOINs across tables | Graph traversal |
-| **Best for** | Structured, predictable data | Connected, complex data |
+| Aspect                  | Traditional DB               | Knowledge Graph               |
+| ----------------------- | ---------------------------- | ----------------------------- |
+| **Structure**     | Fixed tables with rows       | Flexible nodes & edges        |
+| **Relationships** | Foreign keys (indirect)      | First-class citizens (direct) |
+| **Schema**        | Rigid, predefined            | Flexible, can evolve          |
+| **Queries**       | JOINs across tables          | Graph traversal               |
+| **Best for**      | Structured, predictable data | Connected, complex data       |
 
 ---
 
@@ -76,6 +78,7 @@ Imagine you're organizing information about a **contract**:
 ### 1. Nodes (Entities)
 
 **Nodes** are the "things" in your graph. Each node has:
+
 - A **label** (type): e.g., `Contract`, `Party`, `Clause`
 - **Properties** (attributes): e.g., `name: "Acme"`, `amount: 50000`
 
@@ -92,6 +95,7 @@ Imagine you're organizing information about a **contract**:
 ### 2. Edges (Relationships)
 
 **Edges** connect nodes and describe HOW they're related:
+
 - Have a **type**: e.g., `HAS_PARTY`, `CREATES_OBLIGATION`
 - Have a **direction**: from source → target
 - Can have **properties** too: e.g., `since: "2024-01-01"`
@@ -134,6 +138,7 @@ Labels categorize nodes. A node can have multiple labels:
 ### The Problem with Traditional RAG
 
 **Standard RAG** (Retrieval-Augmented Generation):
+
 1. Document → Split into chunks
 2. Chunks → Convert to vectors (embeddings)
 3. Query → Find similar vectors
@@ -148,11 +153,13 @@ Labels categorize nodes. A node can have multiple labels:
 **User Question**: "What are Acme's payment obligations?"
 
 **Vector Search Result**: Might find chunks about payments, but doesn't know:
+
 - WHO is obligated (Acme)
 - TO WHOM (TechStart)
 - CONNECTION to specific contract
 
 **Knowledge Graph Result**:
+
 ```
 Query: Find Obligations where OBLIGATES → Party named "Acme"
 
@@ -169,13 +176,13 @@ Result:
 
 ### KG-RAG Advantages
 
-| Feature | Vector RAG | KG-RAG |
-|---------|-----------|--------|
-| Semantic search | ✅ | ✅ |
-| Exact relationships | ❌ | ✅ |
-| Multi-hop reasoning | ❌ | ✅ |
-| Explainable results | Limited | ✅ |
-| Structured queries | ❌ | ✅ |
+| Feature             | Vector RAG | KG-RAG |
+| ------------------- | ---------- | ------ |
+| Semantic search     | ✅         | ✅     |
+| Exact relationships | ❌         | ✅     |
+| Multi-hop reasoning | ❌         | ✅     |
+| Explainable results | Limited    | ✅     |
+| Structured queries  | ❌         | ✅     |
 
 ---
 
@@ -294,19 +301,20 @@ Neo4j is a **graph database** - a database specifically designed to store and qu
 
 ### Why Neo4j?
 
-| Feature | Description |
-|---------|-------------|
-| **Native Graph Storage** | Data stored as actual graph, not converted from tables |
-| **Cypher Language** | Intuitive query language for graphs |
-| **Performance** | Traversing relationships is O(1), not O(n) JOINs |
-| **ACID Compliance** | Full transaction support |
-| **Free Community Edition** | Open source, no cost |
+| Feature                          | Description                                            |
+| -------------------------------- | ------------------------------------------------------ |
+| **Native Graph Storage**   | Data stored as actual graph, not converted from tables |
+| **Cypher Language**        | Intuitive query language for graphs                    |
+| **Performance**            | Traversing relationships is O(1), not O(n) JOINs       |
+| **ACID Compliance**        | Full transaction support                               |
+| **Free Community Edition** | Open source, no cost                                   |
 
 ### Accessing Neo4j
 
 After starting Neo4j with Docker, open: **http://localhost:7474**
 
 Login:
+
 - Username: `neo4j`
 - Password: `password`
 
@@ -418,6 +426,7 @@ RETURN type(r), connected
 ### Example 1: Understanding Extraction
 
 **Input Text:**
+
 ```
 This License Agreement is between Acme Corp ("Licensor") and TechStart Inc ("Licensee").
 The Licensee shall pay $50,000 annually.
@@ -459,6 +468,7 @@ The Licensee shall pay $50,000 annually.
 **System Process:**
 
 1. **Query Understanding:**
+
    ```json
    {
      "intent": "find payment information",
@@ -466,66 +476,64 @@ The Licensee shall pay $50,000 annually.
      "filters": {"obligation_type": "payment"}
    }
    ```
-
 2. **Cypher Query Generated:**
+
    ```cypher
    MATCH (c:Contract)-[:HAS_AMOUNT]->(a:Amount)
    RETURN c.title, a.value, a.currency, a.description
-   
+
    UNION
-   
+
    MATCH (c:Contract)-[:HAS_CLAUSE]->(cl:Clause)
          -[:CREATES_OBLIGATION]->(o:Obligation)
    WHERE o.obligation_type = "payment"
    RETURN c.title, o.description
    ```
-
 3. **Retrieved Context:**
+
    ```
    Contract: License Agreement
    Amount: $50,000 USD (annual payment)
    ```
-
 4. **Generated Answer:**
+
    > "The License Agreement specifies an annual payment of $50,000 USD."
+   >
 
 ---
 
 ## Next Steps
 
 1. **Start Everything with Makefile**:
+
    ```bash
    make setup    # One-time setup
    make dev      # Start all servers
    make health   # Verify everything is running
    ```
+2. **Or manually start Neo4j**:
 
-2. **Or manually start Neo4j**: 
    ```bash
    docker run -d --name neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j:community
    ```
-
-3. **Explore Browser**: Open http://localhost:7474 and try the Cypher examples
-
+3. **Explore Browser**: Open http://localhost:7474 or https://browser.neo4j.io/ and try the Cypher examples
 4. **Upload a Document**: Use the frontend to upload a PDF and see entities extracted
-
 5. **Visualize the Graph**: Use the Graph tab to see your knowledge graph
-
 6. **Ask Questions**: Try the Query tab to ask questions about your documents
 
 ---
 
 ## Glossary
 
-| Term | Definition |
-|------|------------|
-| **Node** | A point in the graph representing an entity (thing) |
-| **Edge** | A connection between nodes representing a relationship |
-| **Label** | Category/type of a node (e.g., `Contract`, `Party`) |
-| **Property** | Attribute stored on a node or edge |
-| **Cypher** | Neo4j's graph query language |
-| **Traversal** | Following edges to find connected nodes |
-| **Index** | Structure for fast property lookups |
-| **MATCH** | Cypher clause to find patterns |
-| **CREATE** | Cypher clause to add data |
-| **RETURN** | Cypher clause to specify output |
+| Term                | Definition                                             |
+| ------------------- | ------------------------------------------------------ |
+| **Node**      | A point in the graph representing an entity (thing)    |
+| **Edge**      | A connection between nodes representing a relationship |
+| **Label**     | Category/type of a node (e.g.,`Contract`, `Party`) |
+| **Property**  | Attribute stored on a node or edge                     |
+| **Cypher**    | Neo4j's graph query language                           |
+| **Traversal** | Following edges to find connected nodes                |
+| **Index**     | Structure for fast property lookups                    |
+| **MATCH**     | Cypher clause to find patterns                         |
+| **CREATE**    | Cypher clause to add data                              |
+| **RETURN**    | Cypher clause to specify output                        |

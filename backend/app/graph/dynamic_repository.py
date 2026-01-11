@@ -3,10 +3,12 @@ Schema-agnostic graph repository.
 
 This repository works with ANY schema - it dynamically creates
 nodes and relationships based on the schema definition.
+
+Now includes chunk node operations for enhanced retrieval.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from app.core.neo4j_client import Neo4jClient, get_neo4j_client
 from app.schema.loader import SchemaLoader, get_schema_loader
@@ -16,6 +18,9 @@ from app.schema.models import (
     DynamicRelationship,
     DynamicGraph,
 )
+
+if TYPE_CHECKING:
+    from app.ingestion.chunker import TextChunk
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +33,21 @@ class DynamicGraphRepository:
     defined in the loaded schema. It creates Neo4j nodes and relationships
     based on the schema definition, not hardcoded classes.
     
+    Now also supports:
+    - Chunk nodes for storing text chunks
+    - Document nodes for document-level information
+    - Chunk-to-chunk sequential linking (NEXT_CHUNK, PREV_CHUNK)
+    - Entity-to-chunk linking (EXTRACTED_FROM)
+    
     Usage:
         repo = DynamicGraphRepository()
         await repo.initialize()
         
         # Store extracted graph
         await repo.store_graph(dynamic_graph)
+        
+        # Store chunks
+        await repo.store_chunks(chunks, document_id)
         
         # Query entities
         entities = await repo.get_entities_by_type("Author")
@@ -58,11 +72,31 @@ class DynamicGraphRepository:
         else:
             self.schema = self.schema_loader.get_active_schema()
         
-        # Create indexes for all entity types
+        # Create indexes for all entity types and chunks
         await self._create_indexes()
     
     async def _create_indexes(self) -> None:
-        """Create indexes for all entity types in schema."""
+        """Create indexes for all entity types in schema and chunks."""
+        # Index for Chunk nodes
+        chunk_indexes = [
+            "CREATE INDEX chunk_id IF NOT EXISTS FOR (n:Chunk) ON (n.id)",
+            "CREATE INDEX chunk_document IF NOT EXISTS FOR (n:Chunk) ON (n.document_id)",
+            "CREATE INDEX chunk_index IF NOT EXISTS FOR (n:Chunk) ON (n.chunk_index)",
+        ]
+        
+        # Index for Document nodes
+        doc_indexes = [
+            "CREATE INDEX document_id IF NOT EXISTS FOR (n:Document) ON (n.id)",
+            "CREATE INDEX document_filename IF NOT EXISTS FOR (n:Document) ON (n.filename)",
+        ]
+        
+        for query in chunk_indexes + doc_indexes:
+            try:
+                await self.client.execute_write(query)
+            except Exception as e:
+                logger.debug(f"Index creation note: {e}")
+        
+        # Index for schema entities
         for entity in self.schema.entities:
             # Index on id
             index_query = f"CREATE INDEX {entity.name.lower()}_id IF NOT EXISTS FOR (n:{entity.name}) ON (n.id)"
@@ -79,6 +113,437 @@ class DynamicGraphRepository:
                         await self.client.execute_write(prop_index)
                     except Exception:
                         pass
+    
+    # =========================================================================
+    # DOCUMENT OPERATIONS
+    # =========================================================================
+    
+    async def create_document_node(
+        self,
+        document_id: str,
+        filename: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Create a document node.
+        
+        Args:
+            document_id: Unique document identifier
+            filename: Original filename
+            metadata: Additional document metadata
+        """
+        props = {
+            "id": document_id,
+            "filename": filename,
+            **(metadata or {}),
+        }
+        
+        prop_sets = [f"n.{key} = ${key}" for key in props.keys()]
+        set_clause = ", ".join(prop_sets)
+        
+        query = f"""
+        MERGE (n:Document {{id: $id}})
+        SET {set_clause}
+        """
+        
+        await self.client.execute_write(query, props)
+        logger.debug(f"Created Document node: {document_id}")
+    
+    # =========================================================================
+    # CHUNK OPERATIONS
+    # =========================================================================
+    
+    async def store_chunks(
+        self,
+        chunks: list["TextChunk"],
+        document_id: str,
+        link_sequential: bool = True,
+        link_to_document: bool = True,
+    ) -> dict[str, int]:
+        """
+        Store chunks as nodes in Neo4j.
+        
+        Args:
+            chunks: List of TextChunk objects
+            document_id: Document ID to link chunks to
+            link_sequential: Create NEXT_CHUNK/PREV_CHUNK relationships
+            link_to_document: Create FROM_DOCUMENT relationships
+            
+        Returns:
+            Summary of created items
+        """
+        counts = {"chunks": 0, "sequential_links": 0, "document_links": 0}
+        
+        # Create all chunk nodes
+        for chunk in chunks:
+            await self.create_chunk_node(chunk, document_id)
+            counts["chunks"] += 1
+        
+        # Create sequential links
+        if link_sequential and len(chunks) > 1:
+            for i in range(len(chunks) - 1):
+                await self.link_chunks_sequential(chunks[i].id, chunks[i + 1].id)
+                counts["sequential_links"] += 1
+        
+        # Create document links
+        if link_to_document:
+            for chunk in chunks:
+                await self.link_chunk_to_document(chunk.id, document_id)
+                counts["document_links"] += 1
+        
+        logger.info(f"Stored {counts['chunks']} chunks for document {document_id}")
+        return counts
+    
+    async def create_chunk_node(
+        self,
+        chunk: "TextChunk",
+        document_id: str,
+    ) -> None:
+        """
+        Create a single chunk node.
+        
+        Args:
+            chunk: TextChunk object
+            document_id: Parent document ID
+        """
+        # Build properties from chunk
+        props = {
+            "id": chunk.id,
+            "document_id": document_id,
+            "chunk_index": chunk.chunk_index,
+            "start_char": chunk.start_char,
+            "end_char": chunk.end_char,
+            "text": chunk.text,
+            "char_count": chunk.char_count,
+            "word_count": chunk.word_count,
+        }
+        
+        # Add metadata properties
+        for key, value in chunk.metadata.items():
+            if value is not None:
+                # Flatten complex types to strings
+                if isinstance(value, (list, dict)):
+                    import json
+                    props[key] = json.dumps(value)
+                else:
+                    props[key] = value
+        
+        prop_sets = [f"n.{key} = ${key}" for key in props.keys()]
+        set_clause = ", ".join(prop_sets)
+        
+        query = f"""
+        MERGE (n:Chunk {{id: $id}})
+        SET {set_clause}
+        """
+        
+        await self.client.execute_write(query, props)
+    
+    async def link_chunks_sequential(
+        self,
+        chunk_id: str,
+        next_chunk_id: str,
+    ) -> None:
+        """Create NEXT_CHUNK and PREV_CHUNK relationships."""
+        query = """
+        MATCH (a:Chunk {id: $id1})
+        MATCH (b:Chunk {id: $id2})
+        MERGE (a)-[:NEXT_CHUNK]->(b)
+        MERGE (b)-[:PREV_CHUNK]->(a)
+        """
+        await self.client.execute_write(query, {
+            "id1": chunk_id,
+            "id2": next_chunk_id,
+        })
+    
+    async def link_chunk_to_document(
+        self,
+        chunk_id: str,
+        document_id: str,
+    ) -> None:
+        """Create FROM_DOCUMENT relationship."""
+        query = """
+        MATCH (c:Chunk {id: $chunk_id})
+        MATCH (d:Document {id: $doc_id})
+        MERGE (c)-[:FROM_DOCUMENT]->(d)
+        """
+        await self.client.execute_write(query, {
+            "chunk_id": chunk_id,
+            "doc_id": document_id,
+        })
+    
+    async def link_entity_to_chunk(
+        self,
+        entity_id: str,
+        chunk_id: str,
+    ) -> None:
+        """Create EXTRACTED_FROM relationship from entity to chunk."""
+        query = """
+        MATCH (e {id: $entity_id})
+        MATCH (c:Chunk {id: $chunk_id})
+        MERGE (e)-[:EXTRACTED_FROM]->(c)
+        """
+        await self.client.execute_write(query, {
+            "entity_id": entity_id,
+            "chunk_id": chunk_id,
+        })
+    
+    async def get_chunk_by_id(self, chunk_id: str) -> Optional[dict[str, Any]]:
+        """Get a chunk by ID."""
+        query = """
+        MATCH (c:Chunk {id: $id})
+        RETURN c
+        """
+        results = await self.client.execute_query(query, {"id": chunk_id})
+        return dict(results[0]["c"]) if results else None
+    
+    async def get_chunks_for_document(
+        self,
+        document_id: str,
+        include_text: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Get all chunks for a document, ordered by index."""
+        if include_text:
+            query = """
+            MATCH (c:Chunk {document_id: $doc_id})
+            RETURN c
+            ORDER BY c.chunk_index
+            """
+        else:
+            query = """
+            MATCH (c:Chunk {document_id: $doc_id})
+            RETURN c.id as id, c.chunk_index as chunk_index, 
+                   c.page_number as page_number, c.section_heading as section_heading,
+                   c.word_count as word_count
+            ORDER BY c.chunk_index
+            """
+        
+        results = await self.client.execute_query(query, {"doc_id": document_id})
+        
+        if include_text:
+            return [dict(r["c"]) for r in results]
+        else:
+            return [dict(r) for r in results]
+    
+    async def get_neighboring_chunks(
+        self,
+        chunk_id: str,
+        before: int = 1,
+        after: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Get a chunk with its neighboring chunks for context expansion.
+        
+        Args:
+            chunk_id: Target chunk ID
+            before: Number of chunks before
+            after: Number of chunks after
+            
+        Returns:
+            Dict with 'before', 'current', 'after' chunks
+        """
+        # Build dynamic pattern based on before/after counts
+        query = """
+        MATCH (current:Chunk {id: $id})
+        OPTIONAL MATCH path_before = (current)<-[:NEXT_CHUNK*1..""" + str(before) + """]-(before:Chunk)
+        OPTIONAL MATCH path_after = (current)-[:NEXT_CHUNK*1..""" + str(after) + """]->(after:Chunk)
+        WITH current, 
+             collect(DISTINCT before) as before_chunks,
+             collect(DISTINCT after) as after_chunks
+        RETURN current,
+               before_chunks,
+               after_chunks
+        """
+        
+        results = await self.client.execute_query(query, {"id": chunk_id})
+        
+        if not results:
+            return {"before": [], "current": None, "after": []}
+        
+        result = results[0]
+        
+        # Sort before chunks by index (descending distance from current)
+        before_list = [dict(c) for c in result["before_chunks"] if c]
+        before_list.sort(key=lambda x: x.get("chunk_index", 0))
+        
+        # Sort after chunks by index
+        after_list = [dict(c) for c in result["after_chunks"] if c]
+        after_list.sort(key=lambda x: x.get("chunk_index", 0))
+        
+        return {
+            "before": before_list,
+            "current": dict(result["current"]) if result["current"] else None,
+            "after": after_list,
+        }
+    
+    async def search_chunks_by_text(
+        self,
+        search_text: str,
+        document_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Search chunks by text content.
+        
+        Args:
+            search_text: Text to search for
+            document_id: Optional document to limit search
+            limit: Maximum results
+            
+        Returns:
+            List of matching chunks
+        """
+        if document_id:
+            query = """
+            MATCH (c:Chunk {document_id: $doc_id})
+            WHERE toLower(c.text) CONTAINS toLower($search)
+            RETURN c
+            ORDER BY c.chunk_index
+            LIMIT $limit
+            """
+            params = {"doc_id": document_id, "search": search_text, "limit": limit}
+        else:
+            query = """
+            MATCH (c:Chunk)
+            WHERE toLower(c.text) CONTAINS toLower($search)
+            RETURN c
+            LIMIT $limit
+            """
+            params = {"search": search_text, "limit": limit}
+        
+        results = await self.client.execute_query(query, params)
+        return [dict(r["c"]) for r in results]
+    
+    async def search_chunks_by_key_terms(
+        self,
+        terms: list[str],
+        document_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Search chunks by key terms.
+        
+        Args:
+            terms: List of terms to match
+            document_id: Optional document to limit search
+            limit: Maximum results
+            
+        Returns:
+            List of matching chunks with match counts
+        """
+        # Convert terms to lowercase for matching
+        terms_lower = [t.lower() for t in terms]
+        
+        if document_id:
+            query = """
+            MATCH (c:Chunk {document_id: $doc_id})
+            WHERE c.key_terms IS NOT NULL
+            WITH c, [term IN $terms WHERE toLower(c.key_terms) CONTAINS term] as matches
+            WHERE size(matches) > 0
+            RETURN c, size(matches) as match_count
+            ORDER BY match_count DESC, c.chunk_index
+            LIMIT $limit
+            """
+            params = {"doc_id": document_id, "terms": terms_lower, "limit": limit}
+        else:
+            query = """
+            MATCH (c:Chunk)
+            WHERE c.key_terms IS NOT NULL
+            WITH c, [term IN $terms WHERE toLower(c.key_terms) CONTAINS term] as matches
+            WHERE size(matches) > 0
+            RETURN c, size(matches) as match_count
+            ORDER BY match_count DESC
+            LIMIT $limit
+            """
+            params = {"terms": terms_lower, "limit": limit}
+        
+        results = await self.client.execute_query(query, params)
+        return [{"chunk": dict(r["c"]), "match_count": r["match_count"]} for r in results]
+    
+    async def get_chunks_by_page(
+        self,
+        document_id: str,
+        page_number: int,
+    ) -> list[dict[str, Any]]:
+        """Get all chunks on a specific page."""
+        query = """
+        MATCH (c:Chunk {document_id: $doc_id})
+        WHERE c.page_number = $page
+        RETURN c
+        ORDER BY c.chunk_index
+        """
+        results = await self.client.execute_query(query, {
+            "doc_id": document_id,
+            "page": page_number,
+        })
+        return [dict(r["c"]) for r in results]
+    
+    async def get_chunks_with_temporal_refs(
+        self,
+        document_id: Optional[str] = None,
+        temporal_type: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get chunks that have temporal references.
+        
+        Args:
+            document_id: Optional document to filter
+            temporal_type: Optional type filter (date, duration, relative)
+            
+        Returns:
+            List of chunks with temporal_refs
+        """
+        conditions = ["c.temporal_refs IS NOT NULL"]
+        params = {}
+        
+        if document_id:
+            conditions.append("c.document_id = $doc_id")
+            params["doc_id"] = document_id
+        
+        if temporal_type:
+            conditions.append(f"c.temporal_refs CONTAINS '{temporal_type}'")
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+        MATCH (c:Chunk)
+        WHERE {where_clause}
+        RETURN c
+        ORDER BY c.chunk_index
+        """
+        
+        results = await self.client.execute_query(query, params)
+        return [dict(r["c"]) for r in results]
+    
+    async def get_source_chunk_for_entity(
+        self,
+        entity_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get the source chunk for an entity."""
+        query = """
+        MATCH (e {id: $entity_id})-[:EXTRACTED_FROM]->(c:Chunk)
+        RETURN c
+        """
+        results = await self.client.execute_query(query, {"entity_id": entity_id})
+        return dict(results[0]["c"]) if results else None
+    
+    async def get_entities_from_chunk(
+        self,
+        chunk_id: str,
+    ) -> list[dict[str, Any]]:
+        """Get all entities extracted from a chunk."""
+        query = """
+        MATCH (e)-[:EXTRACTED_FROM]->(c:Chunk {id: $chunk_id})
+        RETURN e, labels(e)[0] as entity_type
+        """
+        results = await self.client.execute_query(query, {"chunk_id": chunk_id})
+        return [
+            {**dict(r["e"]), "_type": r["entity_type"]}
+            for r in results
+        ]
+    
+    # =========================================================================
+    # ENTITY OPERATIONS (existing)
+    # =========================================================================
     
     async def store_graph(self, graph: DynamicGraph) -> dict[str, int]:
         """
@@ -250,11 +715,15 @@ class DynamicGraphRepository:
     async def get_visualization_data(
         self,
         limit: int = 100,
+        include_chunks: bool = False,
     ) -> dict[str, Any]:
         """Get graph data for visualization."""
-        # Get nodes
-        nodes_query = """
+        # Exclude chunks from visualization by default (too many nodes)
+        label_filter = "WHERE NOT 'Chunk' IN labels(n) AND NOT 'Document' IN labels(n)" if not include_chunks else ""
+        
+        nodes_query = f"""
         MATCH (n)
+        {label_filter}
         RETURN n, labels(n)[0] as label
         LIMIT $limit
         """
@@ -266,9 +735,12 @@ class DynamicGraphRepository:
             node["_label"] = r["label"]
             nodes.append(node)
         
-        # Get relationships
-        rels_query = """
+        # Get relationships (excluding chunk relationships by default)
+        rel_filter = "WHERE NOT type(r) IN ['NEXT_CHUNK', 'PREV_CHUNK', 'FROM_DOCUMENT', 'EXTRACTED_FROM']" if not include_chunks else ""
+        
+        rels_query = f"""
         MATCH (a)-[r]->(b)
+        {rel_filter}
         RETURN a.id as source, b.id as target, type(r) as type
         LIMIT $limit
         """
@@ -303,15 +775,35 @@ class DynamicGraphRepository:
         return stats
     
     async def delete_document_graph(self, source_document: str) -> dict[str, int]:
-        """Delete all entities from a specific document."""
-        query = """
+        """Delete all entities and chunks from a specific document."""
+        # Delete chunks first
+        chunk_query = """
+        MATCH (c:Chunk {document_id: $doc})
+        DETACH DELETE c
+        RETURN count(c) as deleted_chunks
+        """
+        chunk_results = await self.client.execute_query(chunk_query, {"doc": source_document})
+        
+        # Delete document node
+        doc_query = """
+        MATCH (d:Document {id: $doc})
+        DETACH DELETE d
+        """
+        await self.client.execute_write(doc_query, {"doc": source_document})
+        
+        # Delete entities
+        entity_query = """
         MATCH (n)
         WHERE n.source_document = $doc OR n.source_file = $doc
         DETACH DELETE n
         RETURN count(n) as deleted
         """
-        results = await self.client.execute_query(query, {"doc": source_document})
-        return {"deleted": results[0]["deleted"] if results else 0}
+        entity_results = await self.client.execute_query(entity_query, {"doc": source_document})
+        
+        return {
+            "deleted_entities": entity_results[0]["deleted"] if entity_results else 0,
+            "deleted_chunks": chunk_results[0]["deleted_chunks"] if chunk_results else 0,
+        }
     
     async def clear_all(self) -> dict[str, Any]:
         """Clear the entire graph."""
@@ -327,6 +819,8 @@ class DynamicGraphRepository:
             "entities": {},
             "total_nodes": 0,
             "total_relationships": stats.get("_relationships", 0),
+            "chunks": stats.get("Chunk", 0),
+            "documents": stats.get("Document", 0),
         }
         
         for entity_def in self.schema.entities:
