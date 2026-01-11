@@ -35,7 +35,7 @@ class HealthResponse(BaseModel):
     timestamp: str
     version: str
     services: dict[str, ServiceHealth]
-    schema: Optional[dict] = None
+    active_schema: Optional[dict] = None
 
 
 class ReadinessResponse(BaseModel):
@@ -104,7 +104,7 @@ async def health_check():
         timestamp=datetime.utcnow().isoformat() + "Z",
         version="0.1.0",
         services=services,
-        schema=schema_info,
+        active_schema=schema_info,
     )
 
 
