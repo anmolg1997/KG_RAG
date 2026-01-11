@@ -11,7 +11,8 @@
 
 .PHONY: help setup backend-setup frontend-setup dev backend frontend neo4j \
         docker-up docker-down clean test lint format health \
-        strategy strategy-presets strategy-load strategy-reset
+        strategy strategy-presets strategy-load strategy-reset \
+        stop-backend stop-frontend stop-servers stop restart
 
 # Default target
 .DEFAULT_GOAL := help
@@ -22,6 +23,12 @@ GREEN := \033[32m
 YELLOW := \033[33m
 RED := \033[31m
 NC := \033[0m  # No Color
+
+# Configurable ports (override with: make stop-backend BACKEND_PORT=9000)
+BACKEND_PORT ?= 8000
+FRONTEND_PORT ?= 5173
+NEO4J_HTTP_PORT ?= 7474
+NEO4J_BOLT_PORT ?= 7687
 
 # =============================================================================
 # HELP
@@ -86,10 +93,15 @@ help: ## Show this help message
 	@echo "  $(GREEN)make shell$(NC)           Open Python shell with app context"
 	@echo "  $(GREEN)make logs-backend$(NC)    Tail backend log files"
 	@echo ""
+	@echo "$(YELLOW)🛑 STOP COMMANDS$(NC)"
+	@echo "  $(GREEN)make stop-backend$(NC)    Stop backend server only"
+	@echo "  $(GREEN)make stop-frontend$(NC)   Stop frontend server only"
+	@echo "  $(GREEN)make stop-servers$(NC)    Stop backend + frontend (keep Neo4j)"
+	@echo "  $(GREEN)make stop$(NC)            Stop everything (backend + frontend + Neo4j)"
+	@echo ""
 	@echo "$(YELLOW)⚡ SHORTCUTS$(NC)"
 	@echo "  $(GREEN)make install$(NC)         → make setup"
 	@echo "  $(GREEN)make start$(NC)           → make dev"
-	@echo "  $(GREEN)make stop$(NC)            → Stop all services"
 	@echo "  $(GREEN)make restart$(NC)         → Stop then start"
 	@echo ""
 	@echo "$(BLUE)─────────────────────────────────────────────────────────────────────$(NC)"
@@ -124,15 +136,15 @@ frontend-setup: ## Setup frontend with npm
 
 dev: ## Start all development servers (backend + frontend)
 	@echo "$(BLUE)Starting development servers...$(NC)"
-	@echo "Backend:  http://localhost:8000"
-	@echo "Frontend: http://localhost:5173"
-	@echo "Neo4j:    http://localhost:7474"
+	@echo "Backend:  http://localhost:$(BACKEND_PORT)"
+	@echo "Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "Neo4j:    http://localhost:$(NEO4J_HTTP_PORT)"
 	@echo ""
 	@make -j2 backend frontend
 
 backend: ## Start backend server
-	@echo "$(BLUE)Starting backend...$(NC)"
-	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@echo "$(BLUE)Starting backend on port $(BACKEND_PORT)...$(NC)"
+	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
 
 frontend: ## Start frontend dev server
 	@echo "$(BLUE)Starting frontend...$(NC)"
@@ -149,11 +161,11 @@ neo4j: ## Start Neo4j database (Docker)
 	else \
 		docker run -d \
 			--name neo4j \
-			-p 7474:7474 -p 7687:7687 \
+			-p $(NEO4J_HTTP_PORT):7474 -p $(NEO4J_BOLT_PORT):7687 \
 			-e NEO4J_AUTH=neo4j/password \
 			neo4j:community; \
 	fi
-	@echo "$(GREEN)✓ Neo4j running at http://localhost:7474$(NC)"
+	@echo "$(GREEN)✓ Neo4j running at http://localhost:$(NEO4J_HTTP_PORT)$(NC)"
 
 neo4j-stop: ## Stop Neo4j database
 	@echo "$(BLUE)Stopping Neo4j...$(NC)"
@@ -174,9 +186,9 @@ docker-up: ## Start all services with Docker Compose
 	@echo "$(BLUE)Starting all services...$(NC)"
 	docker-compose up -d
 	@echo "$(GREEN)✓ All services running$(NC)"
-	@echo "Frontend: http://localhost:5173"
-	@echo "Backend:  http://localhost:8000"
-	@echo "Neo4j:    http://localhost:7474"
+	@echo "Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "Backend:  http://localhost:$(BACKEND_PORT)"
+	@echo "Neo4j:    http://localhost:$(NEO4J_HTTP_PORT)"
 
 docker-down: ## Stop all Docker Compose services
 	@echo "$(BLUE)Stopping all services...$(NC)"
@@ -196,21 +208,21 @@ docker-build: ## Rebuild Docker images
 health: ## Check health of all services
 	@echo "$(BLUE)Checking service health...$(NC)"
 	@echo ""
-	@echo "Neo4j:"
-	@curl -s http://localhost:7474 > /dev/null 2>&1 && \
+	@echo "Neo4j (port $(NEO4J_HTTP_PORT)):"
+	@curl -s http://localhost:$(NEO4J_HTTP_PORT) > /dev/null 2>&1 && \
 		echo "  $(GREEN)✓ Running$(NC)" || echo "  $(RED)✗ Not running$(NC)"
 	@echo ""
-	@echo "Backend:"
-	@curl -s http://localhost:8000/health > /dev/null 2>&1 && \
+	@echo "Backend (port $(BACKEND_PORT)):"
+	@curl -s http://localhost:$(BACKEND_PORT)/health > /dev/null 2>&1 && \
 		echo "  $(GREEN)✓ Running$(NC)" || echo "  $(RED)✗ Not running$(NC)"
 	@echo ""
-	@echo "Frontend:"
-	@curl -s http://localhost:5173 > /dev/null 2>&1 && \
+	@echo "Frontend (port $(FRONTEND_PORT)):"
+	@curl -s http://localhost:$(FRONTEND_PORT) > /dev/null 2>&1 && \
 		echo "  $(GREEN)✓ Running$(NC)" || echo "  $(RED)✗ Not running$(NC)"
 
 health-detail: ## Show detailed health status
 	@echo "$(BLUE)Detailed health check...$(NC)"
-	@curl -s http://localhost:8000/health | python -m json.tool 2>/dev/null || \
+	@curl -s http://localhost:$(BACKEND_PORT)/health | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Backend not reachable$(NC)"
 
 # =============================================================================
@@ -282,16 +294,16 @@ strategy: ## Show current extraction & retrieval strategies
 	@echo "$(BLUE)Current Strategies:$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Extraction Strategy:$(NC)"
-	@curl -s http://localhost:8000/strategies/extraction | python -m json.tool 2>/dev/null || \
+	@curl -s http://localhost:$(BACKEND_PORT)/strategies/extraction | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Backend not reachable$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Retrieval Strategy:$(NC)"
-	@curl -s http://localhost:8000/strategies/retrieval | python -m json.tool 2>/dev/null || \
+	@curl -s http://localhost:$(BACKEND_PORT)/strategies/retrieval | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Backend not reachable$(NC)"
 
 strategy-presets: ## List available strategy presets
 	@echo "$(BLUE)Available Strategy Presets:$(NC)"
-	@curl -s http://localhost:8000/strategies/presets | python -m json.tool 2>/dev/null || \
+	@curl -s http://localhost:$(BACKEND_PORT)/strategies/presets | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Backend not reachable$(NC)"
 
 strategy-load: ## Load a strategy preset (usage: make strategy-load PRESET=comprehensive)
@@ -300,14 +312,14 @@ strategy-load: ## Load a strategy preset (usage: make strategy-load PRESET=compr
 		echo "Available: minimal, balanced, comprehensive, speed, research"; \
 	else \
 		echo "$(BLUE)Loading preset: $(PRESET)$(NC)"; \
-		curl -s -X POST http://localhost:8000/strategies/preset \
+		curl -s -X POST http://localhost:$(BACKEND_PORT)/strategies/preset \
 			-H "Content-Type: application/json" \
 			-d '{"name": "$(PRESET)"}' | python -m json.tool; \
 	fi
 
 strategy-reset: ## Reset strategies to defaults
 	@echo "$(BLUE)Resetting strategies to defaults...$(NC)"
-	@curl -s -X POST http://localhost:8000/strategies/reset | python -m json.tool 2>/dev/null || \
+	@curl -s -X POST http://localhost:$(BACKEND_PORT)/strategies/reset | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Backend not reachable$(NC)"
 
 # =============================================================================
@@ -318,12 +330,39 @@ db-clear: ## Clear all data from Neo4j (DANGEROUS!)
 	@echo "$(YELLOW)WARNING: This will delete ALL data in Neo4j!$(NC)"
 	@read -p "Are you sure? [y/N] " confirm && \
 		[ "$$confirm" = "y" ] && \
-		curl -X DELETE http://localhost:8000/graph/all || \
+		curl -X DELETE http://localhost:$(BACKEND_PORT)/graph/all || \
 		echo "Cancelled"
 
 db-stats: ## Show database statistics
-	@curl -s http://localhost:8000/graph/stats | python -m json.tool 2>/dev/null || \
+	@curl -s http://localhost:$(BACKEND_PORT)/graph/stats | python -m json.tool 2>/dev/null || \
 		echo "$(RED)Could not fetch stats$(NC)"
+
+# =============================================================================
+# STOP COMMANDS
+# =============================================================================
+
+stop-backend: ## Stop backend server (port $(BACKEND_PORT))
+	@echo "$(BLUE)Stopping backend (port $(BACKEND_PORT))...$(NC)"
+	@PID=$$(lsof -ti:$(BACKEND_PORT) 2>/dev/null); \
+	if [ -n "$$PID" ]; then \
+		kill -9 $$PID 2>/dev/null; \
+		echo "$(GREEN)✓ Backend stopped (killed PID $$PID on port $(BACKEND_PORT))$(NC)"; \
+	else \
+		echo "$(YELLOW)Backend was not running on port $(BACKEND_PORT)$(NC)"; \
+	fi
+
+stop-frontend: ## Stop frontend server (port $(FRONTEND_PORT))
+	@echo "$(BLUE)Stopping frontend (port $(FRONTEND_PORT))...$(NC)"
+	@PID=$$(lsof -ti:$(FRONTEND_PORT) 2>/dev/null); \
+	if [ -n "$$PID" ]; then \
+		kill -9 $$PID 2>/dev/null; \
+		echo "$(GREEN)✓ Frontend stopped (killed PID $$PID on port $(FRONTEND_PORT))$(NC)"; \
+	else \
+		echo "$(YELLOW)Frontend was not running on port $(FRONTEND_PORT)$(NC)"; \
+	fi
+
+stop-servers: stop-backend stop-frontend ## Stop backend and frontend (not Neo4j)
+	@echo "$(GREEN)✓ Dev servers stopped$(NC)"
 
 # =============================================================================
 # QUICK COMMANDS
@@ -333,6 +372,7 @@ install: setup ## Alias for setup
 
 start: dev ## Alias for dev
 
-stop: neo4j-stop docker-down ## Stop all services
+stop: stop-backend stop-frontend neo4j-stop ## Stop all services (backend + frontend + Neo4j)
+	@echo "$(GREEN)✓ All services stopped$(NC)"
 
 restart: stop dev ## Restart all services
